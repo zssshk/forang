@@ -15,7 +15,12 @@ services:
     restart: unless-stopped
 
   artex:
-    image: autumn27/artex:${ARTEX_TAG:-latest}
+    # 从本地源码构建，不再拉 autumn27/artex 预构建镜像（那是原版 ARTEX，不含 FORANG 的 C2/Webshell）。
+    # 先按 Dockerfile 注释编译好二进制（dist/<arch>/artex），再 docker compose up -d --build。
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: forang:local
     depends_on:
       postgres:
         condition: service_healthy
