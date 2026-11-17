@@ -9,14 +9,14 @@ package server
 // 与 agent 工具 c2_beacons/c2_exec 同一内核。
 
 import (
-	"time"
-	"path/filepath"
-	"os"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Autumn-27/artex/c2client"
 )
@@ -34,11 +34,15 @@ func (s *Server) c2StatusAPI(w http.ResponseWriter, r *http.Request) {
 	} else if cfg.Token != "" {
 		masked = "已设置"
 	}
-	writeJSON(w, 200, map[string]any{"data": map[string]any{
+	status := map[string]any{
 		"url": cfg.BaseURL, "token_masked": masked,
 		"reachable": err == nil, "beacons": len(clients),
 		"error": errString(err),
-	}})
+	}
+	if emp3r0rEnabled() {
+		status["emp3r0r"] = emp3r0rStatus()
+	}
+	writeJSON(w, 200, map[string]any{"data": status})
 }
 
 // GET /api/tools/c2/clients
@@ -49,6 +53,11 @@ func (s *Server) c2ClientsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go s.c2CheckNewSessions(clients) // 新 beacon 上线 → 钉钉/飞书推送
+	if emp3r0rEnabled() {
+		if extra := emp3r0rListClients(); len(extra) > 0 {
+			clients = append(clients, extra...) // 融合视图：双后端目标并列
+		}
+	}
 	writeJSON(w, 200, map[string]any{"data": clients})
 }
 
@@ -66,6 +75,17 @@ func (s *Server) c2ExecAPI(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "session_id 与 cmd 必填")
 		return
 	}
+	// 融合路由：emp3r0r 命名空间目标走 bridge（exec 模块，同步等待+异步补齐）
+	if strings.HasPrefix(b.SessionID, emp3r0rIDPrefix) {
+		if !emp3r0rEnabled() {
+			writeErr(w, 503, "emp3r0r 后端未启用")
+			return
+		}
+		tag := strings.TrimPrefix(b.SessionID, emp3r0rIDPrefix)
+		taskID, _ := emp3r0rEnqueueExec(tag, b.Cmd)
+		writeJSON(w, 200, map[string]any{"data": map[string]any{"task_id": taskID}})
+		return
+	}
 	taskID, err := c2Client().EnqueueTask(r.Context(), b.SessionID, "exec", map[string]any{"cmd": b.Cmd})
 	if err != nil {
 		writeErr(w, 502, "任务下发失败: "+err.Error())
@@ -79,6 +99,14 @@ func (s *Server) c2TasksAPI(w http.ResponseWriter, r *http.Request) {
 	sid := r.URL.Query().Get("session_id")
 	if sid == "" {
 		writeErr(w, 400, "session_id 必填")
+		return
+	}
+	if tid := r.URL.Query().Get("task_id"); strings.HasPrefix(tid, emp3r0rTaskPfx) {
+		if v := emp3r0rTaskView(tid); v != nil {
+			writeJSON(w, 200, v)
+			return
+		}
+		writeErr(w, 404, "任务不存在: "+tid)
 		return
 	}
 	params := url.Values{}
