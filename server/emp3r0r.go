@@ -141,11 +141,19 @@ func emp3r0rListClients() []any {
 	if json.Unmarshal(raw, &env) != nil {
 		return nil
 	}
-	// list_agents 输出可能是 JSON 数组或带说明的文本——尽力解析，失败则包进备注
+	// list_agents 输出可能是 JSON 数组、{"agents":[...]} 包裹对象或带说明的文本
 	var agents []map[string]any
 	trimmed := strings.TrimSpace(env.Data)
-	if strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
-		if json.Unmarshal([]byte(trimmed), &agents) != nil && strings.HasPrefix(trimmed, "{") {
+	switch {
+	case strings.HasPrefix(trimmed, "["):
+		_ = json.Unmarshal([]byte(trimmed), &agents)
+	case strings.HasPrefix(trimmed, "{"):
+		var wrapped struct {
+			Agents []map[string]any `json:"agents"`
+		}
+		if json.Unmarshal([]byte(trimmed), &wrapped) == nil && wrapped.Agents != nil {
+			agents = wrapped.Agents
+		} else {
 			var one map[string]any
 			if json.Unmarshal([]byte(trimmed), &one) == nil {
 				agents = []map[string]any{one}
@@ -210,10 +218,10 @@ func emp3r0rEnqueueExec(agentTag, cmd string) (string, *emp3r0rTask) {
 	go func() {
 		raw, code, err := emp3r0rCall("POST", "/exec", map[string]any{"agent": agentTag, "cmd": cmd})
 		t.mu2().Lock()
-		defer t.mu2().Unlock()
 		t.UpdatedAt = time.Now()
 		if err != nil {
 			t.Status, t.Output, t.Err = "failed", "bridge 不可达: "+err.Error(), "bridge error"
+			t.mu2().Unlock()
 			return
 		}
 		var env struct {
@@ -226,10 +234,48 @@ func emp3r0rEnqueueExec(agentTag, cmd string) (string, *emp3r0rTask) {
 			}
 			_ = json.Unmarshal(raw, &e)
 			t.Status, t.Output, t.Err = "failed", e.Detail, e.Detail
+			t.mu2().Unlock()
 			return
 		}
 		t.Status = "done"
 		t.Output = env.Data
+		t.mu2().Unlock()
+
+		// 补齐命令回显：调度回执里有 job_id，轮询 /job 拉实际输出写回任务，
+		// 前端（c2classic 控制台/SSE）读任务即可见命令结果。
+		var sched struct {
+			JobID    string `json:"job_id"`
+			Executed bool   `json:"executed"`
+		}
+		if json.Unmarshal([]byte(env.Data), &sched) == nil && sched.JobID != "" {
+			for i := 0; i < 15; i++ {
+				time.Sleep(2 * time.Second)
+				jraw, jcode, jerr := emp3r0rCall("GET", "/job?id="+sched.JobID, nil)
+				if jerr != nil || jcode != 200 {
+					continue
+				}
+				var jenv struct {
+					Data string `json:"data"`
+				}
+				if json.Unmarshal(jraw, &jenv) != nil {
+					continue
+				}
+				var job struct {
+					Output string `json:"output"`
+					Size   int    `json:"size"`
+				}
+				if json.Unmarshal([]byte(jenv.Data), &job) != nil {
+					continue
+				}
+				if job.Size > 0 {
+					t.mu2().Lock()
+					t.Output = job.Output
+					t.UpdatedAt = time.Now()
+					t.mu2().Unlock()
+					return
+				}
+			}
+		}
 	}()
 	return id, t
 }

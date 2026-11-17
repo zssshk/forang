@@ -371,8 +371,9 @@ func (b *bridge) handleExec(w http.ResponseWriter, r *http.Request) {
 		b.writeJSON(w, map[string]any{"detail": err.Error()})
 		return
 	}
-	// run_module exec：BOF 经 coffloader_linux 内存加载（Linux 目标）
-	res, err := b.mcp.tool("run_module", map[string]any{
+	// run_module exec：BOF 经 coffloader_linux 内存加载（Linux 目标）；
+	// 走 callTool 带自愈（mcp 失联 → 重建 → 重试一次）
+	res, err := b.callTool("run_module", map[string]any{
 		"module": "exec", "flags": map[string]any{"cmd": req.Cmd, "mode": "shell"},
 	}, b.execLimit)
 	if err != nil {
@@ -392,9 +393,11 @@ func (b *bridge) handleJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tail := r.URL.Query().Get("tail")
-	args := map[string]any{"job": id}
+	args := map[string]any{"job_id": id}
 	if tail != "" {
-		args["tail"] = json.Number(tail)
+		// read_job_output: tail=bool 截尾开关，limit=字节数
+		args["tail"] = true
+		args["limit"] = json.Number(tail)
 	}
 	out, err := b.callTool("read_job_output", args, 30*time.Second)
 	if err != nil {
