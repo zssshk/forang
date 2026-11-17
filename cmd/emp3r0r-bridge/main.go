@@ -25,6 +25,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +36,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/curve25519"
 )
 
 type mcpClient struct {
@@ -57,7 +60,7 @@ type rpcResp struct {
 }
 
 func newMCPClient(bin string) (*mcpClient, error) {
-	cmd := exec.Command(bin, "mcp")
+	cmd := exec.Command(bin, mcpArgs()...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -66,7 +69,11 @@ func newMCPClient(bin string) (*mcpClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd.Stderr = io.Discard // MCP stdio 只允许 JSON 走 stdout
+	if f, ferr := os.OpenFile("/tmp/emp3r0r-mcp.stderr", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); ferr == nil {
+		cmd.Stderr = f // 诊断：mcp 的 stderr（含 operator 日志摘要）落盘
+	} else {
+		cmd.Stderr = io.Discard
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("spawn %s mcp: %w", bin, err)
 	}
@@ -77,6 +84,51 @@ func newMCPClient(bin string) (*mcpClient, error) {
 	}
 	c.ready = true
 	return c, nil
+}
+
+// mcpArgs 从 server 的 wg_config.json 自动构造 `emp3r0r mcp` 的 operator 连接
+// 参数（c2-host 本机、operator 端口、双方 WG 身份）。server WG 公钥由
+// server_private_key 经 curve25519 推导（与 WireGuard 公钥同运算）。
+func mcpArgs() []string {
+	cfgPath := os.Getenv("EMP3R0R_WG_CONFIG")
+	if cfgPath == "" {
+		home, _ := os.UserHomeDir()
+		cfgPath = home + "/.emp3r0r/wg_config.json"
+	}
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return []string{"mcp"}
+	}
+	var cfg struct {
+		ServerIP   string `json:"server_ip"`
+		ServerPriv string `json:"server_private_key"`
+		Subnet     string `json:"subnet"`
+		Operators  []struct {
+			Name       string `json:"name"`
+			IP         string `json:"ip"`
+			PrivateKey string `json:"private_key"`
+		} `json:"operators"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil || len(cfg.Operators) == 0 {
+		return []string{"mcp"}
+	}
+	priv, err := base64.StdEncoding.DecodeString(cfg.ServerPriv)
+	if err != nil || len(priv) != 32 {
+		return []string{"mcp"}
+	}
+	pub, err := curve25519.X25519(priv, curve25519.Basepoint)
+	if err != nil {
+		return []string{"mcp"}
+	}
+	op := cfg.Operators[0]
+	return []string{"mcp",
+		"--c2-host", "127.0.0.1",
+		"--operator-port", envOr("EMP3R0R_OPERATOR_PORT", "13377"),
+		"--server-wg-key", base64.StdEncoding.EncodeToString(pub),
+		"--server-wg-ip", cfg.ServerIP,
+		"--operator-wg-ip", op.IP,
+		"--operator-wg-key", op.PrivateKey,
+	}
 }
 
 func (c *mcpClient) call(method string, params any, timeout time.Duration) (json.RawMessage, error) {
@@ -137,11 +189,14 @@ func (c *mcpClient) initialize() error {
 		ID      int64  `json:"id"`
 		Method  string `json:"method"`
 		Params  any    `json:"params"`
-	}{Params: map[string]any{
-		"protocolVersion": "2025-06-18",
-		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "emp3r0r-bridge", "version": "0.1.0"},
-	}}
+	}{
+		JSONRPC: "2.0", ID: 1, Method: "initialize",
+		Params: map[string]any{
+			"protocolVersion": "2025-06-18",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "emp3r0r-bridge", "version": "0.1.0"},
+		},
+	}
 	b, _ := json.Marshal(id)
 	if _, err := c.stdin.Write(append(b, '\n')); err != nil {
 		return err
@@ -204,10 +259,42 @@ func (c *mcpClient) tool(name string, args map[string]any, timeout time.Duration
 
 type bridge struct {
 	mcp        *mcpClient
+	mcpMu      sync.Mutex
 	token      string
 	execLimit  time.Duration
 	mu         sync.Mutex
 	lastTarget string
+}
+
+// rebuild 自愈：kill 现有 mcp 子进程并重新 spawn（operator tunnel 被替换/
+// 长连接失效后的恢复路径）。调用方需持 mcpMu。
+func (b *bridge) rebuild() error {
+	if b.mcp != nil && b.mcp.cmd.Process != nil {
+		_ = b.mcp.cmd.Process.Kill()
+	}
+	mcp, err := newMCPClient(envOr("EMP3R0R_BIN", "/usr/local/bin/emp3r0r"))
+	if err != nil {
+		return err
+	}
+	b.mcp = mcp
+	b.lastTarget = ""
+	log.Printf("mcp client rebuilt (pid=%d)", mcp.cmd.Process.Pid)
+	return nil
+}
+
+// callTool 带自愈的工具调用：首次失败（超时/EOF/tunnel 失效）后重建 mcp 再试一次。
+func (b *bridge) callTool(name string, args map[string]any, timeout time.Duration) (string, error) {
+	b.mcpMu.Lock()
+	defer b.mcpMu.Unlock()
+	out, err := b.mcp.tool(name, args, timeout)
+	if err != nil {
+		log.Printf("mcp call %s 失败（%v），重建 client 重试", name, err)
+		if rerr := b.rebuild(); rerr != nil {
+			return "", fmt.Errorf("重建失败: %v（原始错误: %v）", rerr, err)
+		}
+		return b.mcp.tool(name, args, timeout)
+	}
+	return out, nil
 }
 
 func (b *bridge) auth(w http.ResponseWriter, r *http.Request) bool {
@@ -231,7 +318,7 @@ func (b *bridge) selectIfChanged(agent string) error {
 	if cur == agent {
 		return nil
 	}
-	if _, err := b.mcp.tool("select_agent", map[string]any{"agent": agent}, 30*time.Second); err != nil {
+	if _, err := b.callTool("select_agent", map[string]any{"agent": agent}, 30*time.Second); err != nil {
 		return fmt.Errorf("select_agent: %w", err)
 	}
 	b.mu.Lock()
@@ -244,13 +331,12 @@ func (b *bridge) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if !b.auth(w, r) {
 		return
 	}
+	b.mcpMu.Lock()
 	alive := b.mcp != nil && b.mcp.ready && b.mcp.cmd.Process != nil
-	active := ""
-	if b.mcp != nil {
-		b.mu.Lock()
-		active = b.lastTarget
-		b.mu.Unlock()
-	}
+	b.mcpMu.Unlock()
+	b.mu.Lock()
+	active := b.lastTarget
+	b.mu.Unlock()
 	b.writeJSON(w, map[string]any{"data": map[string]any{
 		"bridge": "up", "mcp_alive": alive, "active_target": active,
 	}})
@@ -260,7 +346,7 @@ func (b *bridge) handleAgents(w http.ResponseWriter, r *http.Request) {
 	if !b.auth(w, r) {
 		return
 	}
-	out, err := b.mcp.tool("list_agents", map[string]any{}, 60*time.Second)
+	out, err := b.callTool("list_agents", map[string]any{}, 60*time.Second)
 	if err != nil {
 		b.writeJSON(w, map[string]any{"detail": err.Error()})
 		return
@@ -310,7 +396,7 @@ func (b *bridge) handleJob(w http.ResponseWriter, r *http.Request) {
 	if tail != "" {
 		args["tail"] = json.Number(tail)
 	}
-	out, err := b.mcp.tool("read_job_output", args, 30*time.Second)
+	out, err := b.callTool("read_job_output", args, 30*time.Second)
 	if err != nil {
 		b.writeJSON(w, map[string]any{"detail": err.Error()})
 		return
