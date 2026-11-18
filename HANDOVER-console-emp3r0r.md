@@ -137,6 +137,30 @@ classic stats：`agents_online=1, offline=1, total=2`。
    （`app.js:11`）把 `/api/*` 重写到 `/api/tools/c2/classic/*`，这个端点只
    服务直连 REST 的调用方。
 
+2a. **OPSEC 拦截被显示成成功 + schedule 三缺陷**（2026-11-18 16:3x 修复，
+`7503c8e`/`244a936`）。两者都会让「目标机上什么都没发生」看起来像「已完成」：
+- bridge `/exec` 对 OPSEC 拦截照样回 200，任务记 done、拦截 JSON 当输出。
+  `emp3r0rRunWait` 现在解析回执（`blocked:true` 或 `executed:false` 或
+  `decision.allowed:false` 任一），失败并给出策略原因。
+- 机器上没有 `~/.emp3r0r/mcp.json` 策略文件时，默认策略拒绝一切不可逆操作
+  ——`rm`、`crontab -l`（被误判 persistence）全部静默拒绝。已建
+  `/root/.emp3r0r/mcp.json`（600，`allow_irreversible:true`，保留
+  `max_noise:high` 与 30 次/分钟限速）。改策略后必须
+  `systemctl restart emp3r0r-bridge`。
+- bridge `callTool` 把 `read_job_output` 的 miss 当 mcp 故障杀子进程重建：
+  agent 分钟级轮询下 miss 是常态，FORANG 每 2s 补齐轮询触发死亡螺旋
+  （实测 8 秒重建 5 次，job 状态全丢）。现在 job 读取走 `callToolPlain`
+  （`7503c8e`），重建只留给真失联。
+- `c2ScheduleCmd` 三个 bug（均实测复现后修复）：add 的 `grep -v FORANG_SCH`
+  会清掉先前所有条目（加一根少一根）；`rm <n>` 把条目序号当 crontab 全量
+  行号（`schedule rm 1` 实测删掉了用户自己的 kejilion 任务，目标探针反而
+  幸存）；生成的命令用了 `<(...)` 进程替换，而 run_module exec 是
+  /bin/sh（dash）直接静默失败。现为幂等 add + 标记序号精确删除 +
+  mktemp/纯 sh，四个子命令在真实目标机端到端验证通过
+  （`server/c2_os_sched_test.go` 覆盖 dash 可解析性与 rm 语义）。
+  面板路径验证时注意：agent 60s 轮询，命令到执行有分钟级延迟，别拿
+  秒级输出空判失败。
+
 2b. **插件执行 + 资料库取回**（2026-11-18 14:3x 补齐，`f3bfca6`）。两处原先
    绕过 emp3r0r 的路由：
    - `c2xPluginsRun` 走 `c2RunTaskWait`（`c2_plugins.go:308`，只认 goc2 任务
