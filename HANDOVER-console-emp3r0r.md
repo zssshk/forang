@@ -137,6 +137,24 @@ classic stats：`agents_online=1, offline=1, total=2`。
    （`app.js:11`）把 `/api/*` 重写到 `/api/tools/c2/classic/*`，这个端点只
    服务直连 REST 的调用方。
 
+2b. **插件执行 + 资料库取回**（2026-11-18 14:3x 补齐，`f3bfca6`）。两处原先
+   绕过 emp3r0r 的路由：
+   - `c2xPluginsRun` 走 `c2RunTaskWait`（`c2_plugins.go:308`，只认 goc2 任务
+     队列，**不在两个总闸里**）→ emp3r0r 会话点插件报「会话不存在」。现已
+     按前缀分流到 `emp3r0rRunWait`（90s/条）。
+   - `c2xCommand` 的 `upload <path>` 分支（**从目标机取回**到资料库，别和
+     `c2xFilesUpload` 往目标机投文件搞混）在前缀判断**之前**就 `EnqueueTask`,
+     现由目标机 `base64 -w0` 回显、服务端解码后落 `evidence/c2-lib/<agent>/`。
+     目录/空文件/不存在/base64 报错都返回明确错误，不落垃圾文件。
+   验收：`upload /tmp/probe_ul.txt` → 落盘 19 字节，`cmp` 与源**字节级一致**；
+   插件 1「信息收集」→ 真实 `id`/`uname`/`ip a` 输出，ms 有值。
+
+2c. **仍然是 goc2-only 的端点**（未测，按代码判断需另补）：`c2xScheduleCmd`
+   （`schedule ` 前缀，计划任务）、`c2xFileDelete` 的 `rm ` 之外的删除路径、
+   以及任何直接 `c2Client().Request` 的专用功能（socks/forwarders 隧道那类，
+   见 `c2_classic2.go:296/307/332`）。这些不是「坏了」，是 emp3r0r 后端压根
+   没有对应能力，要先确认 emp3r0r 侧有无等价原语再决定是否 501。
+
 3. **磁盘 92%**（剩 3.9G）。上一轮清过约 10G（go-build cache、docker builder
    cache、悬空镜像、NDK zip、journal 收缩到 100M），已回涨。可再清：
    `emp3r0r-builder` 镜像 1.97G（amd64，本机 ARM 直编用不上）、
