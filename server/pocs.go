@@ -56,7 +56,9 @@ func (s *Server) pocList(w http.ResponseWriter, r *http.Request) {
 	if pocs == nil {
 		pocs = []pgdb.Poc{}
 	}
-	writeJSON(w, 200, map[string]any{"pocs": pocs})
+	// 弹药库联动映射：按 CVE 关联 poc-collection 目录（有才带，前端据此
+	// 显示"投送"按钮）。无 PoC 仓库挂载时 ammo 为空 map，列表照常。
+	writeJSON(w, 200, map[string]any{"pocs": pocs, "ammo": ammoIndex()})
 }
 
 // POST /api/pocs {title,component,cve,severity,template,source}
