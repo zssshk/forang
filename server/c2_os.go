@@ -152,12 +152,22 @@ func c2ScheduleCmd(isWin bool, action string, intervalSec int, cmdText string, j
 	}
 	switch action {
 	case "add":
-		return fmt.Sprintf("(crontab -l 2>/dev/null | grep -v 'FORANG_SCH'; echo '*/%d * * * * %s # FORANG_SCH') | crontab -",
-			intervalSec/60, cmdText)
+		// 幂等重加：只顶掉与新条目逐字相同的旧行，其余标记行一律保留。
+		// 早先的 grep -v 'FORANG_SCH' 会把整个标记族清空，多加一根就少一根。
+		line := fmt.Sprintf("*/%d * * * * %s # FORANG_SCH", intervalSec/60, cmdText)
+		return fmt.Sprintf("t=$(mktemp); crontab -l 2>/dev/null | grep -vF -- %s > \"$t\"; "+
+			"printf '%%s\\n' %s >> \"$t\"; crontab \"$t\"; rm -f \"$t\"; "+
+			"crontab -l 2>/dev/null | grep FORANG_SCH | nl",
+			shellQuote(line), shellQuote(line))
 	case "ls":
 		return `crontab -l 2>/dev/null | grep FORANG_SCH | nl`
 	case "rm":
-		return fmt.Sprintf("crontab -l 2>/dev/null | sed '%dd' | crontab -; echo \"job %d removed\"", jobID, jobID)
+		// jobID 取自 ls 的 nl 编号，是「第几个标记条目」，不是 crontab 全量行号。
+		// 按全量行号 sed '%dd' 会删掉用户自己的无关任务（实测删过 kejilion 那条）。
+		// 用临时文件而非 <(...)：run_module exec 跑在 /bin/sh（dash）下，无进程替换。
+		return fmt.Sprintf("t=$(mktemp); crontab -l 2>/dev/null | awk -v n=%d -v tag='FORANG_SCH' "+
+			"'index($0,tag){c++; if(c==n) next} {print}' > \"$t\"; crontab \"$t\"; rm -f \"$t\"; "+
+			"echo \"job %d removed\"", jobID, jobID)
 	case "clear":
 		return `crontab -l 2>/dev/null | grep -v FORANG_SCH | crontab -; echo "cleared"`
 	}
