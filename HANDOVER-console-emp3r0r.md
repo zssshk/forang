@@ -200,6 +200,33 @@ classic stats：`agents_online=1, offline=1, total=2`。
    data/ 下均无该表/文件，存储位置以实际实现为准；`/setup` 返回 200
    不能作为未初始化证据（SPA 路由）。
 
+### Linux arm64 免杀投放（evasion-linux，2026-11-18 新增）
+
+**上游 stager 链对 arm64 不可用**（已实证）：`generate_c` 报
+`raw PIC (malasada) is amd64-only`；且 `stager_linux` 的 stub.c:76 按函数
+指针跳转 payload，只认 PIC 不认 ELF/.so。FORANG 面板免杀
+（buildEvasionLoader）是 windows/amd64 专用。因此自建了 FORANG 侧
+loader：`evasion-linux/`（commit `4f0b08b`+`1059345`）。
+
+- 原理：pack.py 把 agent ELF zlib 压缩 + AES-256-CTR 加密（openssl CLI，
+  key 每次随机）→ payload.enc；loader.go 经 go:embed 内嵌，运行时
+  `memfd_create`(arm64 syscall 279，**不设 CLOEXEC**——fd 要活过 exec，
+  agent 经 /proc/self/fd/<fd> 自读) + `syscall.Exec`。磁盘零落盘，
+  /proc/<pid>/exe 显示 `memfd:[kworker/u9:2] (deleted)`。
+- 出货流程（源码改动后）：
+  ```bash
+  cd /root/forang-src/evasion-linux
+  python3 pack.py <agent ELF>        # 生成 payload.enc + key.go
+  PATH=/usr/local/go/bin:/root/gopath/bin:$PATH \
+    CGO_ENABLED=0 GOARCH=arm64 GOOS=linux \
+    garble -tiny -seed=random build -trimpath -ldflags "-s -w -buildid=" -o loader-memfd .
+  ```
+  payload.enc/key.go 已 gitignore，每次打包重生成。
+- 已验证（本机）：7.5MB loader 内嵌 16.2MB TLS agent，memfd 执行、
+  TLS 会话 ESTAB、cmdline 仅 `/proc/self/fd/3`。
+- 边界：emp3r0r agent 起来后自拷贝到 `$HOME/.emp3r0r` 是上游固有行为，
+  本 loader 只覆盖投放面；工作目录名硬编码（config_c2.go:12）也待上游。
+
 ## 五、命令速查
 
 ### 面板状态 / 验收
