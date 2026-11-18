@@ -41,8 +41,10 @@
 模板 → 一键投送。零 DB 迁移（动态 CVE 关联，不落 poc_dir 列）。主面板
 前端改动走 `web npm run build:static → cp web/out server/webui/dist →
 go build -tags embedui → compose up --build → JWT 重签` 全链（已跑通，
-TypeScript 类型检查在 next build 内）。剩余可选：资产匹配视图（/pocs/match
-前端无调用方，agent 工具侧 match_poc 已有）同样接投送按钮。
+TypeScript 类型检查在 next build 内）。资产批量匹配视图也已上线（`36cff4d`）：
+/system/pocs 页 PocMatchCard 卡片——资产行手输或从资产库导入（api.assets），
+POST /pocs/match，命中行（ammo 命中的 CVE）直接投送；实测 freepbx 资产
+命中 CVE-2025-57819（critical）带映射。至此弹药库两阶段全部闭环。
 
 
 ## 一、实况快照（全部实测）
