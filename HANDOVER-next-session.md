@@ -34,8 +34,15 @@
    go build -tags embedui` 产物（go 在 `/usr/local/go/bin`）；`/tmp/sign_token.py`
    已重写（旧文档第五节 heredoc 有乱码，勿照抄），干净版在 /tmp。
 
-**第二阶段未动工**（下会话可接）：PoC 库 2000+ 条目与弹药库联动——条目挂
-poc_dir、资产匹配命中后一键投送。
+**第二阶段已完成**（`91e7a7f`）：PoC 库与弹药库联动上线——`GET /api/pocs`
+响应附 `ammo` 映射（CVE → poc-collection 目录/主 exploit/README 用法提示，
+`ammoIndex()` 60s 缓存，实测 48/2000 条命中）；PoC 库页（主面板
+/system/pocs）命中条目带"投送"按钮 → 弹窗选双后端会话 + run_hint 预填
+模板 → 一键投送。零 DB 迁移（动态 CVE 关联，不落 poc_dir 列）。主面板
+前端改动走 `web npm run build:static → cp web/out server/webui/dist →
+go build -tags embedui → compose up --build → JWT 重签` 全链（已跑通，
+TypeScript 类型检查在 next build 内）。剩余可选：资产匹配视图（/pocs/match
+前端无调用方，agent 工具侧 match_poc 已有）同样接投送按钮。
 
 
 ## 一、实况快照（全部实测）
