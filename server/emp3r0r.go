@@ -35,7 +35,7 @@ var (
 	emp3r0rToken     string
 	emp3r0rExecWait  = 15
 	emp3r0rHTTP      = &http.Client{Timeout: 130 * time.Second} // 须 > bridge EMP3R0R_EXEC_TIMEOUT(60s)：run_module 同步等结果
-	emp3r0rTasks     sync.Map // 伪 taskId → *emp3r0rTask
+	emp3r0rTasks     sync.Map                                   // 伪 taskId → *emp3r0rTask
 	emp3r0rTaskSeq   int64
 	emp3r0rTaskSeqMu sync.Mutex
 )
@@ -305,8 +305,18 @@ func emp3r0rTaskView(taskID string) map[string]any {
 }
 
 // emp3r0rAllTasks 快照全部任务（c2classic SSE poller 用），字段形状对齐
-// goc2 ListTasks 的 map：id/status/output/error/createdAt/args/type。
+// goc2 ListTasks 的 map：id/status/output/error/createdAt/args/type，
+// 并附带 result/updated_at/updatedAt 增量键（无消费方时无副作用）。
 func emp3r0rAllTasks() []any {
+	return emp3r0rTasksForClient("")
+}
+
+// emp3r0rTasksForClient 按会话快照任务；clientID 为空返回全部。
+//
+// 行形状直接复用 emp3r0rTask.MarshalJSON——手抄字段表曾漏掉 result/updated_at，
+// 与单任务视图（emp3r0rTaskView）不一致，前端读两条路径会拿到不同键集。
+// createdAt 保持 RFC3339Nano 字符串（c2classic 用 tm["createdAt"].(string) 断言）。
+func emp3r0rTasksForClient(clientID string) []any {
 	out := []any{}
 	emp3r0rTasks.Range(func(_, v any) bool {
 		t, ok := v.(*emp3r0rTask)
@@ -314,18 +324,21 @@ func emp3r0rAllTasks() []any {
 			return true
 		}
 		t.mu.Lock()
-		row := map[string]any{
-			"id":        t.ID,
-			"client_id": t.ClientID,
-			"type":      t.Type,
-			"args":      t.Args,
-			"status":    t.Status,
-			"output":    t.Output,
-			"error":     t.Err,
-			"createdAt": t.CreatedAt.Format(time.RFC3339Nano),
+		match := clientID == "" || t.ClientID == clientID
+		var row map[string]any
+		if match {
+			// 形状唯一真源：emp3r0rTask.MarshalJSON（含 updated_at 等键）。
+			raw, _ := json.Marshal(t)
+			row = map[string]any{}
+			_ = json.Unmarshal(raw, &row)
+			delete(row, "result") // 与 output 同值；c2classic 只读 output
+			// c2classic 断言 createdAt 为 string，nano 精度与旧值一致。
+			row["createdAt"] = t.CreatedAt.Format(time.RFC3339Nano)
 		}
 		t.mu.Unlock()
-		out = append(out, row)
+		if match {
+			out = append(out, row)
+		}
 		return true
 	})
 	return out

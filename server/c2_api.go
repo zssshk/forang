@@ -113,6 +113,17 @@ func (s *Server) c2TasksAPI(w http.ResponseWriter, r *http.Request) {
 	if tid := r.URL.Query().Get("task_id"); tid != "" {
 		params.Set("taskId", tid)
 	}
+	// 融合路由：emp3r0r 会话的任务只存在于进程内快照，goc2 侧查无此会话
+	// （/clients/{sid}/tasks 会回「会话不存在」）。task_id 带上前缀时上面已
+	// 由 emp3r0rTaskView 处理，这里补的是**不带 task_id 的列表查询**。
+	if strings.HasPrefix(sid, emp3r0rIDPrefix) {
+		if !emp3r0rEnabled() {
+			writeErr(w, 503, "emp3r0r 后端未启用")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"data": emp3r0rTasksForClient(sid)})
+		return
+	}
 	tasks, err := c2Client().ListTasks(r.Context(), sid, params)
 	if err != nil {
 		writeErr(w, 502, "查询失败: "+err.Error())
