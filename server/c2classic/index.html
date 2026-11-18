@@ -64,6 +64,7 @@
       <button class="tab-btn" data-tab="proc">📋 进程</button>
       <button class="tab-btn" data-tab="net">🔍 网络探测</button>
       <button class="tab-btn" data-tab="plugins">🧩 插件</button>
+      <button class="tab-btn" data-tab="exploits">💣 弹药库</button>
       <button class="tab-btn" data-tab="graph">🕸 链路图</button>
       <button class="tab-btn" data-tab="wsshell">🖥 反弹Shell</button>
       <button class="tab-btn" data-tab="library">📚 资料库</button>
@@ -380,6 +381,23 @@
         <div style="flex:1;overflow:auto;padding:12px 18px;display:flex;flex-direction:column;gap:10px">
           <div id="plugin-list" style="display:flex;flex-direction:column;gap:8px"></div>
           <pre id="plugin-out" style="display:none;margin:0;padding:12px 14px;background:var(--bg-1);border:1px solid var(--border);border-radius:6px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--text-1);white-space:pre-wrap;max-height:50%;overflow:auto"></pre>
+        </div>
+      </div>
+
+      <!-- FORANG 功能面板：弹药库（PoC 仓库投送） -->
+      <div class="tab-panel" id="panel-exploits">
+        <div class="panel-toolbar">
+          <div class="toolbar-left"><span class="panel-title">💣 弹药库 <span id="exploits-agent-indicator" style="font-weight:400;font-size:11px;color:var(--text-muted)"></span></span></div>
+          <div class="toolbar-right">
+            <input type="text" id="exploits-search" placeholder="过滤 CVE / 组件…" autocomplete="off"
+                   style="background:var(--bg-1);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text-1);font-size:12px;width:180px"
+                   oninput="exploitsRender()">
+            <button class="btn-sm" onclick="exploitsRefresh()">🔄 刷新</button>
+          </div>
+        </div>
+        <div style="flex:1;overflow:auto;padding:12px 18px;display:flex;flex-direction:column;gap:10px">
+          <div id="exploits-list" style="display:flex;flex-direction:column;gap:8px">加载中…</div>
+          <pre id="exploits-out" style="display:none;margin:0;padding:12px 14px;background:var(--bg-1);border:1px solid var(--border);border-radius:6px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--text-1);white-space:pre-wrap;max-height:40%;overflow:auto"></pre>
         </div>
       </div>
 

