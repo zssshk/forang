@@ -30,6 +30,11 @@ func (s *Server) c2xPtyAttach(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "agent_id 必填")
 		return
 	}
+	if strings.HasPrefix(b.AgentID, emp3r0rIDPrefix) {
+		writeErr(w, 501, "emp3r0r 目标暂不支持 PTY：bridge 暴露的是 run_module 一次性执行，" +
+			"没有会话级 pty_open/read/write 原语，请用命令框做非交互执行。")
+		return
+	}
 	if b.Cols <= 0 {
 		b.Cols = 120
 	}

@@ -14,7 +14,6 @@ import (
 	"unicode/utf16"
 )
 
-
 // psOneLiner 把 PowerShell 脚本包成 -EncodedCommand（base64 UTF-16LE）。
 // 直接 -Command "..." 传 cmd /C 时 $var 会被 PS 命令行层展开吃掉（实测），
 // 编码传输彻底规避引号/变量转义问题。
@@ -31,6 +30,29 @@ func psOneLiner(script string) string {
 
 // c2IsWin 判断会话目标是否 Windows（按 goc2 clients 的 osType 字段）。
 func (s *Server) c2IsWin(ctx context.Context, sessionID string) bool {
+	// 融合视图：emp3r0r 会话的 OS 来自 bridge /agents，不能拿 goc2 列表判
+	// （goc2 不认识这批 id，会一律落到 false，Windows 目标因此被下发 sh 命令）。
+	if strings.HasPrefix(sessionID, emp3r0rIDPrefix) {
+		tag := strings.TrimPrefix(sessionID, emp3r0rIDPrefix)
+		for _, a := range emp3r0rListClients() {
+			m, ok := a.(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, _ := m["id"].(string); id != emp3r0rIDPrefix+tag {
+				continue
+			}
+			osName, _ := m["os"].(string)
+			if osName == "" {
+				osName, _ = m["os_type"].(string)
+			}
+			if osName == "" {
+				osName, _ = m["platform"].(string)
+			}
+			return strings.Contains(strings.ToLower(osName), "win")
+		}
+		return false
+	}
 	clients, err := c2Client().ListClients(ctx, nil)
 	if err != nil {
 		return false

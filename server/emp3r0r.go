@@ -34,7 +34,7 @@ var (
 	emp3r0rBridge    string
 	emp3r0rToken     string
 	emp3r0rExecWait  = 15
-	emp3r0rHTTP      = &http.Client{Timeout: 20 * time.Second}
+	emp3r0rHTTP      = &http.Client{Timeout: 130 * time.Second} // 须 > bridge EMP3R0R_EXEC_TIMEOUT(60s)：run_module 同步等结果
 	emp3r0rTasks     sync.Map // 伪 taskId → *emp3r0rTask
 	emp3r0rTaskSeq   int64
 	emp3r0rTaskSeqMu sync.Mutex
@@ -80,6 +80,19 @@ func emp3r0rInit() {
 }
 
 func emp3r0rEnabled() bool { return emp3r0rBridge != "" }
+
+// emp3r0rNotes 会话备注的进程内存储（emp3r0r 没有 goc2 的 notes 字段）。
+var emp3r0rNotes sync.Map // "emp3r0r:<tag>" -> string
+
+func emp3r0rNote(id string) string {
+	if v, ok := emp3r0rNotes.Load(id); ok {
+		s, _ := v.(string)
+		return s
+	}
+	return ""
+}
+
+func emp3r0rSetNote(id, note string) { emp3r0rNotes.Store(id, note) }
 
 // emp3r0rCall 调 bridge REST。
 func emp3r0rCall(method, path string, body any) ([]byte, int, error) {
@@ -196,8 +209,9 @@ func emp3r0rClientShape(tag string, a map[string]any) map[string]any {
 		"arch":      get("arch", "goarch"),
 		"ip":        get("ip", "local_ip", "internal_ip"),
 		"listener":  "emp3r0r",
+		"status":    "active",
 		"last_seen": time.Now().Format(time.RFC3339),
-		"notes":     "emp3r0r agent",
+		"notes":     emp3r0rNote(emp3r0rIDPrefix + tag),
 		"extra":     a,
 	}
 }
@@ -249,7 +263,7 @@ func emp3r0rEnqueueExec(agentTag, cmd string) (string, *emp3r0rTask) {
 			Executed bool   `json:"executed"`
 		}
 		if json.Unmarshal([]byte(env.Data), &sched) == nil && sched.JobID != "" {
-			for i := 0; i < 15; i++ {
+			for i := 0; i < 60; i++ {
 				time.Sleep(2 * time.Second)
 				jraw, jcode, jerr := emp3r0rCall("GET", "/job?id="+sched.JobID, nil)
 				if jerr != nil || jcode != 200 {
@@ -301,14 +315,14 @@ func emp3r0rAllTasks() []any {
 		}
 		t.mu.Lock()
 		row := map[string]any{
-			"id":         t.ID,
-			"client_id":  t.ClientID,
-			"type":       t.Type,
-			"args":       t.Args,
-			"status":     t.Status,
-			"output":     t.Output,
-			"error":      t.Err,
-			"createdAt":  t.CreatedAt.Format(time.RFC3339Nano),
+			"id":        t.ID,
+			"client_id": t.ClientID,
+			"type":      t.Type,
+			"args":      t.Args,
+			"status":    t.Status,
+			"output":    t.Output,
+			"error":     t.Err,
+			"createdAt": t.CreatedAt.Format(time.RFC3339Nano),
 		}
 		t.mu.Unlock()
 		out = append(out, row)
