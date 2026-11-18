@@ -1,7 +1,36 @@
-# 交接：FORANG/emp3r0r 融合运维 第三会话入口（2026-11-18 21:55）
+# 交接：FORANG/emp3r0r 融合运维 第四会话入口（2026-11-18 23:15）
 
 > 只读本文件即可接手。历史细节、完整命令速查、更早的坑位见
 > `HANDOVER-console-emp3r0r.md`（本文件不重复）。
+
+## 〇、第四会话增量（2026-11-18 22:04~23:10）：面板弹药库已上线
+
+第三会话规划的"弹药库三件套"已全部完成并真机验收（commit `1b8cbc7`，已推送）：
+
+1. **compose 挂载**：`/root/forang-deploy/docker-compose.override.yml` artex.volumes
+   加 `- /root/poc-collection:/poc-collection:ro`（server 端 `POC_REPO` env 可覆盖，
+   默认 `/poc-collection`；宿主跑测试用 `POC_REPO=/root/poc-collection`）。
+2. **后端**（新文件 `server/c2_exploits.go` + `c2_classic.go` 抽取重构）：
+   - `GET /api/tools/c2/classic/exploits`：解析仓库 README 表格（移植
+     `poc-sync/import_pocs.py`），每目录选主 exploit（exploit.py > exploit.sh >
+     exploit/run.sh > poc*.py/exploit*），实测 60 条全解析；
+   - `POST /api/tools/c2/classic/exploits/deploy`：`{agent_id, poc_dir, run_cmd?}`
+     → 主 exploit 投送到 `/tmp/__poc/`（路径校验防越界）+ 可选 `{name}` 模板
+     执行（与 command 端点同路：非阻塞 enqueue，回 command_id）；
+   - `c2_classic.go` 的上传核心抽成 `c2xPushBytes(ctx, agent, dest, filename,
+     data)`，files/upload 与弹药库投送共用（emp3r0r 4KB 分块 / goc2 256KB）。
+3. **前端**：`index.html` 加"💣 弹药库"页签（plugins 后）+ `panel-exploits`；
+   `app.js` 加 `exploitsRefresh/exploitsRender/exploitDeploy/exploitRun`，
+   switchTab 与 agent 指示器已挂钩，带 CVE/组件/严重度过滤。
+4. **真机验收**：freeswitch exploit.py（8992B）投送 emp3r0r:800bc02b，
+   3 块 28.5s，agent 侧 md5 与仓库一致（d187bb98…）。容器已重建、JWT 已重签。
+5. 部署侧坑：`dist/arm64/artex` 是宿主 `CGO_ENABLED=0 GOARCH=arm64
+   go build -tags embedui` 产物（go 在 `/usr/local/go/bin`）；`/tmp/sign_token.py`
+   已重写（旧文档第五节 heredoc 有乱码，勿照抄），干净版在 /tmp。
+
+**第二阶段未动工**（下会话可接）：PoC 库 2000+ 条目与弹药库联动——条目挂
+poc_dir、资产匹配命中后一键投送。
+
 
 ## 一、实况快照（全部实测）
 
@@ -53,27 +82,14 @@
 9. 面板密码（YG 已设）、Oracle 安全组 13456/27286（已放行，实测公网可达）、
    磁盘清理（悬空镜像 1.7G + build cache 1.3G + /tmp）——全部闭环。
 
-## 三、下一步（本会话已确认方向，未动工）：面板弹药库
+## 三、下一步：PoC 库条目与弹药库联动（第二阶段，未动工）
 
-现在 exploit 投送在宿主命令行（`deploy_exploit.sh`），面板里没有弹药库
-页签。已确认的开发方案：
+弹药库三件套第四会话已完成并验收（见"〇"节），宿主命令行的
+`deploy_exploit.sh` 仍可用。下一阶段方向（第三会话已确认）：
 
-1. **compose 挂载**：`/root/poc-collection` 只读挂进 artex 容器
-   （`docker-compose.override.yml` artex.volumes 加一行）。
-2. **后端两端点**（逻辑与 deploy_exploit.sh 相同，搬进 server）：
-   - `GET /api/tools/c2/classic/exploits`：扫仓库目录列清单
-     （CVE/组件/主 exploit 路径/README 摘要——解析逻辑抄
-     `poc-sync/import_pocs.py`）；
-   - `POST /api/tools/c2/classic/exploits/deploy`：{agent_id, poc_dir,
-     run_cmd?} → 复用 `c2xFilesUpload` 的 emp3r0r 分支（4KB 分块已修好）
-     + 可选 `c2xCommand` 执行。
-3. **前端页签**：`server/c2classic/static/js/app.js`（4605 行，fetch 包装
-   在 11 行）加"弹药库"页签：清单 + 会话选择 + 投送/执行按钮。
-
-注意：改完 server 走旧文档"FORANG 重建"流程（宿主编 → dist → compose
-up --build → **JWT 重签**）；前端 app.js 在 gitignore 外，但要确认。
-PoC 库条目（已 2000+ 条）可与弹药库联动：条目挂 poc_dir，资产匹配命中
-后一键投送——这是第二阶段，先做三件套。
+PoC 库条目（FORANG 面板 /api/pocs，已 2000+ 条）与弹药库联动：条目挂
+poc_dir，资产匹配命中后一键投送。改动点在面板 PoC 库页 + 资产匹配逻辑，
+弹药库端点（exploits/deploy）已就绪可直接复用。
 
 ## 四、高频命令（只列新增；其余见旧文档）
 
