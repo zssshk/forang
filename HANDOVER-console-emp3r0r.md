@@ -102,16 +102,41 @@ classic stats：`agents_online=1, offline=1, total=2`。
 
 ## 四、待办（接手按需）
 
-1. **交互式 PTY 未接**（唯一缺口）。bridge 需新增会话级原语：长驻 PTY
-   （open/read/write/resize/close），不是 `run_module` 一次性执行。
-   FORANG 侧 `c2xPtyAttach/Stream/Input/Resize/Close`
-   五个 handler 已有 goc2 版本可参照形状。ARM 宿主上建议直接 fork
-   `/bin/bash` + pty master，绕开 coffloader。工作量中等，动前先定终止条件
-   （agent 侧资源回收、bridge 多会话生命周期）。
-2. **`c2TasksAPI` 对 emp3r0r 会话仍报"会话不存在"**。`/tasks` 只查 goc2 队列。
-   面板主任务视图走的是 classic 那条已修好，这个端点单独补即可：
-   `task_id` 带 `emp3r0r_task_` 前缀时已路由（见 `c2_api.go`），缺的是
-   **不带 task_id 的列表查询**退化为 goc2。要修就补一个 emp3r0r 快照分支。
+1. **交互式 PTY 未接**（唯一缺口）。**2026-11-18 13:2x 复核结论：缺口在 emp3r0r
+   上游，不在 FORANG bridge。** 证据链（均为源码直读，非推测）：
+   - `def.Operation`（`internal/def/operator.go`）只有 `AgentTag/Action/Command/
+     JobID` 四个字段，**没有 stdin 通道**，也没有二次投递到同一 job 的语义。
+   - `jobs.HandleOutput`（`internal/cc/jobs/manager.go:64`）只往
+     `<workspace>/jobs/<id>.log` **追加**；`KillJob` 注释写明占位、不能取消
+     context。manager.go:67 的注释 `If job is "Foreground" (Interactive)` 是**未
+     实现的设想**——全仓 grep `Foreground` 只有这一处注释，没有代码。
+   - agent 侧 `internal/agent/handler/` 只实现了 `proxy relay`（cmd_proxy.go）
+     这种整体转发，没有交互会话原语。
+   - `github.com/creack/pty v1.1.24` 在 `core/go.mod` 是 **`// indirect`**
+     且在 vendor 里，**全仓没有任何 import**——不是现成能力。
+   - module 模型是单向的：`DispatchModule` 起 job，C2 侧用
+     `GetJobOutput(jobID, offset, limit, tail)` 拉（有 offset，**读侧可增量**）。
+   所以「bridge 补 REST」这条路不成立：bridge 只是 `emp3r0r mcp` 的薄层，
+   `/exec` 下面就是 `run_module exec --mode shell`，一次性进程。要做 PTY 必须
+   在 **emp3r0r 上游**新增一个常驻模块（目标机侧 fork `/bin/bash` + pty master，
+   把 stdin 写入口暴露成 module flag/第二 job 类型），再在 bridge 加会话端点，
+   最后 FORANG 五个 handler 才有东西可接。这是跨两仓的功能开发，不是补丁。
+   当前 501 + 明确原因（`c2_classic2.go:33`）是**正确的边界表达**，别为了
+   「功能齐」改成假成功。
+   若真要动，先定终止条件：agent 侧 PTY 回收（进程退出/SIGCHLD）、bridge 多
+   会话生命周期、operator tunnel 断连后的孤儿处置。
+
+2. ~~`c2TasksAPI` 对 emp3r0r 会话仍报"会话不存在"~~ **已修**（本轮）。
+   `/tasks` 不带 `task_id` 的列表查询原先一律落到 goc2
+   `ListTasks` → `GET /clients/emp3r0r:tag/tasks` → "会话不存在"。现在
+   `session_id` 带 `emp3r0r:` 前缀时直接返回进程内快照
+   （`server/emp3r0r_tasks_test.go` 覆盖）。顺带修掉一处同源不一致：
+   `emp3r0rAllTasks` 手抄字段表漏了 `result`/`updated_at`，与单任务视图
+   `emp3r0rTaskView` 键集不同；现统一走 `emp3r0rTask.MarshalJSON` 派生。
+   注意 c2classic 前端并不调用 `/api/tools/c2/tasks`——它的 fetch 包装
+   （`app.js:11`）把 `/api/*` 重写到 `/api/tools/c2/classic/*`，这个端点只
+   服务直连 REST 的调用方。
+
 3. **磁盘 92%**（剩 3.9G）。上一轮清过约 10G（go-build cache、docker builder
    cache、悬空镜像、NDK zip、journal 收缩到 100M），已回涨。可再清：
    `emp3r0r-builder` 镜像 1.97G（amd64，本机 ARM 直编用不上）、
