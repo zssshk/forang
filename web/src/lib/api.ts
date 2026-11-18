@@ -1421,6 +1421,8 @@ export const api = {
   reportMdUrl: (taskId: string) => `/api/tasks/${taskId}/report/markdown`,
 
   pocList: () => get<{ pocs: unknown[]; ammo: Record<string, { dir: string; exploit: string; hint: string }> }>("/pocs"),
+  pocMatch: (assets: { target: string; component: string }[]) =>
+    post<{ matches: { target: string; reason: string; poc: unknown }[]; total: number }>("/pocs/match", { assets }),
   pocDeploy: (agentId: string, pocDir: string, runCmd?: string) =>
     post<{ ok: boolean; poc_dir: string; exploit: string; remote_path: string; total: number; command_id?: string; run_error?: string }>(
       "/tools/c2/classic/exploits/deploy",

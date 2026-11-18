@@ -164,6 +164,8 @@ export default function PocsPage() {
       </div>
       <PocSourcesCard onChanged={load} />
 
+      <PocMatchCard ammo={ammo} onDeploy={openDeploy} />
+
       {(creating || editing) && (
         <PocEditor
           initial={editing}
@@ -318,6 +320,143 @@ export default function PocsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+interface PocMatchRow {
+  target: string;
+  reason: string;
+  poc: Poc;
+}
+
+// PocMatchCard 资产批量匹配：手输或从资产库导入 {target,component} 行，
+// POST /pocs/match 后命中行可一键投送（弹药目录命中的 CVE）。
+function PocMatchCard({
+  ammo,
+  onDeploy,
+}: {
+  ammo: Record<string, AmmoInfo>;
+  onDeploy: (p: Poc) => void;
+}) {
+  const [input, setInput] = React.useState("");
+  const [matches, setMatches] = React.useState<PocMatchRow[]>([]);
+  const [busy, setBusy] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
+
+  const importAssets = React.useCallback(() => {
+    setImporting(true);
+    api
+      .assets("all", 200)
+      .then((r) => {
+        const rows = (r.assets ?? []).map((a) => {
+          const target = a.domain || (a.ip ? a.ip + (a.port ? `:${a.port}` : "") : "");
+          const component =
+            a.bound_domains?.join(",") ||
+            a.open_ports?.map((p) => p.service).filter(Boolean).join(",") ||
+            "";
+          return target ? `${target},${component}` : "";
+        }).filter(Boolean);
+        if (!rows.length) {
+          toast.info("资产库为空或无可导出条目");
+          return;
+        }
+        setInput((prev) => (prev ? prev + "\n" : "") + rows.join("\n"));
+        toast.success(`已导入 ${rows.length} 条资产`);
+      })
+      .catch((e) => toast.error(`拉取资产失败：${e.message}`))
+      .finally(() => setImporting(false));
+  }, []);
+
+  const runMatch = React.useCallback(() => {
+    const assets = input
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const [target, ...rest] = l.split(",");
+        return { target: (target || "").trim(), component: rest.join(",").trim() };
+      })
+      .filter((a) => a.target);
+    if (!assets.length) {
+      toast.warning("请先填资产行（target,component）");
+      return;
+    }
+    setBusy(true);
+    api
+      .pocMatch(assets)
+      .then((r) => {
+        setMatches((r.matches ?? []) as PocMatchRow[]);
+        toast.info(`命中 ${(r.matches ?? []).length} 条`);
+      })
+      .catch((e) => toast.error(`匹配失败：${e.message}`))
+      .finally(() => setBusy(false));
+  }, [input]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">资产批量匹配 → 弹药投送</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <Label>资产行（每行 target,component；component 为指纹关键字）</Label>
+            <Button size="sm" variant="outline" disabled={importing} onClick={importAssets}>
+              {importing ? "导入中…" : "从资产库导入"}
+            </Button>
+          </div>
+          <Textarea
+            rows={4}
+            className="font-mono text-xs"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={"http://10.0.0.5:8080,若依,ruoyi\nvpn.corp.com,freepbx"}
+          />
+        </div>
+        <Button size="sm" disabled={busy} onClick={runMatch}>
+          {busy ? "匹配中…" : "批量匹配"}
+        </Button>
+        {matches.length ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>目标</TableHead>
+                <TableHead>POC</TableHead>
+                <TableHead>CVE</TableHead>
+                <TableHead>等级</TableHead>
+                <TableHead>命中</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {matches.slice(0, 100).map((m, i) => {
+                const a = m.poc.cve ? ammo[m.poc.cve.toUpperCase()] : undefined;
+                return (
+                  <TableRow key={`${m.target}-${m.poc.id}-${i}`}>
+                    <TableCell className="font-mono text-xs">{m.target}</TableCell>
+                    <TableCell className="max-w-[220px] truncate text-xs">{m.poc.title}</TableCell>
+                    <TableCell className="font-mono text-xs">{m.poc.cve || "-"}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{m.poc.severity || "info"}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{m.reason}</TableCell>
+                    <TableCell className="text-right">
+                      {a ? (
+                        <Button size="sm" variant="outline" onClick={() => onDeploy(m.poc)}>
+                          <RocketIcon className="size-4" /> 投送
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 
