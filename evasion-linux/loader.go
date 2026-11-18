@@ -11,12 +11,12 @@ package main
 // 仍会自拷贝到 $HOME/.emp3r0r 并以模板名运行；本 loader 负责的是投放面。
 
 import (
-	_ "embed"
 	"bytes"
 	"compress/zlib"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
