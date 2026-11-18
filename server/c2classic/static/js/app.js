@@ -4472,7 +4472,10 @@ async function exploitDeploy(dir, runCmd) {
 }
 
 async function exploitRun(dir) {
-  const tpl = prompt("执行命令模板（{name} = 远端文件路径）：", "python3 {name}");
+  const e = _exploits.find(x => x.dir === dir);
+  const hint = e?.run_hint || "python3 {name}";
+  const base = (e?.exploit?.split("/").pop() || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tpl = prompt("执行命令模板（{name} = 远端文件路径）：", base ? hint.replace(new RegExp(base, "g"), "{name}") : hint);
   if (tpl === null) return;
   await exploitDeploy(dir, tpl);
 }
