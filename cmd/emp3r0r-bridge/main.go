@@ -282,6 +282,19 @@ func (b *bridge) rebuild() error {
 	return nil
 }
 
+// callToolPlain 不带自愈的工具调用：失败原样返回。
+//
+// read_job_output 专用。agent 是分钟级轮询，job 输出在回传前查不到是**常态**
+// （"job not found"/"job output not found"），不是 mcp 故障；走 callTool 会把
+// 每次未到货的轮询当成失联，杀掉 mcp 子进程重建——job 状态在 mcp 内存里，
+// 重建后更查不到，FORANG 每 2s 的补齐轮询随即再触发重建，形成死亡螺旋
+// （实测 8 秒内重建 5 次）。业务态查询绝不能触发自愈。
+func (b *bridge) callToolPlain(name string, args map[string]any, timeout time.Duration) (string, error) {
+	b.mcpMu.Lock()
+	defer b.mcpMu.Unlock()
+	return b.mcp.tool(name, args, timeout)
+}
+
 // callTool 带自愈的工具调用：首次失败（超时/EOF/tunnel 失效）后重建 mcp 再试一次。
 func (b *bridge) callTool(name string, args map[string]any, timeout time.Duration) (string, error) {
 	b.mcpMu.Lock()
@@ -399,7 +412,7 @@ func (b *bridge) handleJob(w http.ResponseWriter, r *http.Request) {
 		args["tail"] = true
 		args["limit"] = json.Number(tail)
 	}
-	out, err := b.callTool("read_job_output", args, 30*time.Second)
+	out, err := b.callToolPlain("read_job_output", args, 30*time.Second)
 	if err != nil {
 		b.writeJSON(w, map[string]any{"detail": err.Error()})
 		return

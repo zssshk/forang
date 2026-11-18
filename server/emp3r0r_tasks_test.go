@@ -147,3 +147,30 @@ func keysOf(m map[string]any) []string {
 	}
 	return out
 }
+
+// OPSEC 拦截必须被识别为失败，不能当成正常回显——bridge 对拦截也回 200，
+// 漏判会让面板把「目标机上什么都没执行」显示成「已完成」。
+func TestEmp3r0rBlockedDetectsInterception(t *testing.T) {
+	cases := []struct {
+		name    string
+		output  string
+		blocked bool
+	}{
+		{"rm 拦截", `{"blocked":true,"command":"exec --cmd 'rm -rf /tmp/x'","decision":{"allowed":false,"reason":"action is irreversible; set allow_irreversible to permit it"},"executed":false,"reason":"action is irreversible; set allow_irreversible to permit it"}`, true},
+		{"只有 executed:false", `{"executed":false,"module":"exec","reason":"no active target"}`, true},
+		{"只有 decision.allowed:false", `{"decision":{"allowed":false,"reason":"denied by policy"}}`, true},
+		{"正常回显", "uid=0(root) gid=0(root)\n", false},
+		{"正常 JSON 回显", `{"executed":true,"job_id":"abc"}`, false},
+		{"base64 文本（非 JSON）", "cHJvYmUtcGF5bG9hZA==\n", false},
+		{"空输出", "", false},
+	}
+	for _, c := range cases {
+		got, reason := emp3r0rBlocked(c.output)
+		if got != c.blocked {
+			t.Fatalf("%s: blocked=%v 期望 %v（reason=%q）", c.name, got, c.blocked, reason)
+		}
+		if got && reason == "" {
+			t.Fatalf("%s: 拦截必须带原因", c.name)
+		}
+	}
+}

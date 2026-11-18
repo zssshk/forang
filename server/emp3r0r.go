@@ -344,6 +344,45 @@ func emp3r0rTasksForClient(clientID string) []any {
 	return out
 }
 
+// emp3r0rBlocked 判定一条 bridge 回执是否是 OPSEC 拦截（目标机未执行）。
+//
+// bridge /exec 对拦截与成功一视同仁地回 200，拦截只体现在 run_module 的返回
+// JSON 里：{"blocked":true,"executed":false,"reason":"...","decision":{...}}。
+// 判据用 blocked==true **或** executed==false，两者任一即拦截——只认 blocked
+// 会漏掉「缺字段但明确没执行」的形态（例如 no active target）。
+// 不是 JSON 的输出一律视为真实回显，宁可放过也不误杀正常命令。
+func emp3r0rBlocked(output string) (bool, string) {
+	s := strings.TrimSpace(output)
+	if !strings.HasPrefix(s, "{") {
+		return false, ""
+	}
+	var r struct {
+		Blocked  *bool  `json:"blocked"`
+		Executed *bool  `json:"executed"`
+		Reason   string `json:"reason"`
+		Decision *struct {
+			Allowed bool   `json:"allowed"`
+			Reason  string `json:"reason"`
+		} `json:"decision"`
+	}
+	if json.Unmarshal([]byte(s), &r) != nil {
+		return false, ""
+	}
+	blocked := (r.Blocked != nil && *r.Blocked) || (r.Executed != nil && !*r.Executed) ||
+		(r.Decision != nil && !r.Decision.Allowed)
+	if !blocked {
+		return false, ""
+	}
+	reason := strings.TrimSpace(r.Reason)
+	if reason == "" && r.Decision != nil {
+		reason = strings.TrimSpace(r.Decision.Reason)
+	}
+	if reason == "" {
+		reason = "未给出原因"
+	}
+	return true, reason
+}
+
 // emp3r0rRunWait 同步执行一条命令并等待实际回显（c2classic 的
 // sysinfo/敏感扫描命令组用，语义对齐 c2RunTaskWait）。
 //
@@ -364,10 +403,18 @@ func emp3r0rRunWait(ctx context.Context, tag, cmd string, timeout time.Duration)
 			status, output, errStr := t.Status, t.Output, t.Err
 			t.mu.Unlock()
 			if status == "failed" {
+				if strings.TrimSpace(errStr) == "" {
+					errStr = "bridge 调用失败（无详情）"
+				}
 				return "", fmt.Errorf("%s", errStr)
 			}
 			// done 且 Output 已补齐为真实回显（调度回执含 job_id 字段）
 			if status == "done" && output != "" && !strings.Contains(output, `"job_id"`) {
+				// OPSEC 拦截：bridge /exec 照样 200，任务也照样 done，但目标机上
+				// 什么都没执行。不加这层判定，面板会把「被拦」显示成「已完成」。
+				if blocked, reason := emp3r0rBlocked(output); blocked {
+					return "", fmt.Errorf("目标机 OPSEC 策略拒绝执行：%s", reason)
+				}
 				return output, nil
 			}
 		}
