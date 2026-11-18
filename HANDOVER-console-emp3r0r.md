@@ -179,24 +179,26 @@ classic stats：`agents_online=1, offline=1, total=2`。
    见 `c2_classic2.go:296/307/332`）。这些不是「坏了」，是 emp3r0r 后端压根
    没有对应能力，要先确认 emp3r0r 侧有无等价原语再决定是否 501。
 
-3. **磁盘 92%**（剩 3.9G）。上一轮清过约 10G（go-build cache、docker builder
-   cache、悬空镜像、NDK zip、journal 收缩到 100M），已回涨。可再清：
-   `emp3r0r-builder` 镜像 1.97G（amd64，本机 ARM 直编用不上）、
-   `labrats-builder` 2.2G（两周前，无容器使用）、
-   `/root/go` 1.2G（旧 go1.26.3 工具链副本，已被 `/usr/local/go` 1.27.4 取代，
-   但 GOPATH 警告提示仍有引用，删前确认）。
-   journal 现限 100M，如需再压：`journalctl --vacuum-size=50M`。
-4. **云安全组未放行 13456 / 27286**。158.180.91.185 是 Oracle Cloud NAT 前端，
-   hairpin 也不通。当前 emp3r0r agent 走 `cc=127.0.0.1` 本机回连验收。要让
-   外部真实目标机上线：先在控制台放行这两个 TCP 端口，或给 emp3r0r 挂 nginx
-   反代 + 域名（参考 goc2.allclb.com 那套）。放行后用
-   `generate` 工具带真实 `cc` 重新出 payload。
-5. **FORANG 面板登录**：密码已重置为未初始化状态（数据库
-   `auth.password_hash` 已删，旧 hash 备份在
-   `/root/forang-passwd-hash-backup-20261118.txt`，600 权限）。访问
-   https://forang.allclb.com/login 会跳 `/setup` 首次设置，用户名固定
-   `FORANG`。**`/api/auth/init` 没有防重放保护，任何能访问该端点的人都能
-   抢先设密码**，设置后建议确认一次登录。
+3. ~~磁盘 92%~~ **已缓解**（2026-11-18 17:1x）。本轮清了悬空镜像（1.7G，
+   实际独占——`docker images` 的 Size 是共享层累计，别相加估算）+ build
+   cache 可回收部分（1.3G）+ /tmp 探针文件与 ssh 配置备份。现 90%（4.9G）。
+   **不要再清的**：`/root/go` 1.2G 不是旧副本——
+   `docker-compose.override.yml` 把它只读挂载为容器 `/usr/local/go`，是
+   容器内 buildEvasionLoader 现场编译免杀 loader 的 GOROOT，删了免杀编译
+   立刻断；`/root/android-ndk-cache` 2.0G 是 ghostlock-43499-armhf 的
+   qemu 转译构建链（shim 指向它）；`/root/.cache/qmd` 2.2G 是 vault 检索
+   模型本体；`emp3r0r-builder`/`labrats-builder` 是 builder 镜像，重建
+   成本高，除非确认不再编 BOF/agent。`.cache/go-build` 1.3G 可在缺空间
+   时清（`go clean -cache` 代价只是下次编译慢）。
+4. ~~云安全组未放行 13456/27286~~ **已放行**（2026-11-18，YG 在控制台
+   操作）。宿主侧验证 `</dev/tcp/158.180.91.185/13456` 可达，安全组生效。
+   **下一步**（未做）：用 `python3 /tmp/mcp_generate.py` 把脚本里
+   `"cc"` 改为 `158.180.91.185:13456` 重新出 payload，外部目标机才能
+   上线；当前 agent 仍是 `cc=127.0.0.1` 的验收用实例，别直接覆盖它。
+5. ~~面板密码未初始化~~ **YG 已设置密码**（2026-11-18）。注意：交接文档
+   早先写「数据库 auth.password_hash」与实际存储对不上——PG 与
+   data/ 下均无该表/文件，存储位置以实际实现为准；`/setup` 返回 200
+   不能作为未初始化证据（SPA 路由）。
 
 ## 五、命令速查
 
