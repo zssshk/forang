@@ -30,6 +30,13 @@ const (
 	emp3r0rTaskPfx  = "emp3r0r_task_"
 )
 
+// emp3r0rC2Endpoint 返回 emp3r0r CC 的 agent 回连入口（EMP3R0R_C2_ENDPOINT，
+// 如 http://158.180.91.185:13456）。emp3r0r 不提供监听器管理 API，此值仅供
+// 面板监听器列表做只读展示（载荷走免杀投放器，不经 goc2 /generate）。
+func emp3r0rC2Endpoint() string {
+	return strings.TrimSpace(os.Getenv("EMP3R0R_C2_ENDPOINT"))
+}
+
 var (
 	emp3r0rBridge    string
 	emp3r0rToken     string

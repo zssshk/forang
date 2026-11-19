@@ -139,6 +139,21 @@ func (s *Server) c2ListenersAPI(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, "goc2 不可达: "+err.Error())
 		return
 	}
+	// emp3r0r 回连入口作为只读虚拟监听器并列展示（双后端入口一眼可见）。
+	// 它不参与 goc2 /generate——emp3r0r 载荷走免杀投放器，前端按 virtual 禁用。
+	if emp3r0rEnabled() {
+		if ep := emp3r0rC2Endpoint(); ep != "" {
+			if u, perr := url.Parse(ep); perr == nil && u.Host != "" {
+				port := 0
+				fmt.Sscanf(u.Port(), "%d", &port)
+				listeners = append(listeners, map[string]any{
+					"id": "emp3r0r:cc", "name": "emp3r0r-cc",
+					"protocol": u.Scheme, "host": u.Hostname(), "port": port,
+					"status": "listening", "virtual": true,
+				})
+			}
+		}
+	}
 	writeJSON(w, 200, map[string]any{"data": listeners})
 }
 

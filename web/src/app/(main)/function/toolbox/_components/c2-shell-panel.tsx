@@ -124,7 +124,7 @@ export function C2ShellPanel({ beaconId }: { beaconId: string }) {
 // ---------- Agent 生成器 ----------
 // CS/vshell 风格一键载荷：选监听器 + 平台格式 → 真实 beacon 二进制（连接参数
 // 编译时内嵌），下载即部署。旧版只本地拼配置 JSON 让用户自己找工具链编译。
-type ListenerLite = { id: string; name: string; host: string; port: number; protocol: string };
+type ListenerLite = { id: string; name: string; host: string; port: number; protocol: string; virtual?: boolean };
 
 const AGENT_FORMATS: { value: string; label: string }[] = [
   { value: "amd64_exe", label: "Windows x64 EXE" },
@@ -157,7 +157,7 @@ export function C2AgentBuilder() {
     try {
       const r = await api.c2Listeners();
       const list = ((r as unknown as { data: ListenerLite[] }).data ?? []).map((l: ListenerLite) => ({
-        id: l.id, name: l.name, host: l.host, port: l.port, protocol: l.protocol ?? "",
+        id: l.id, name: l.name, host: l.host, port: l.port, protocol: l.protocol ?? "", virtual: !!(l as { virtual?: boolean }).virtual,
       }));
       setListeners(list);
       if (list.length > 0 && !listenerId) setListenerId(list[0].id);
@@ -246,7 +246,7 @@ export function C2AgentBuilder() {
           <select className="w-full rounded border bg-zinc-900 p-2 text-sm text-zinc-100 [color-scheme:dark]" value={listenerId} onChange={(e) => setListenerId(e.target.value)}>
             {listeners.length === 0 && <option value="">（无可用监听器）</option>}
             {listeners.map((l) => (
-              <option key={l.id} value={l.id}>{l.name} · {l.host}:{l.port} ({l.protocol})</option>
+              <option key={l.id} value={l.id}>{l.name} · {l.host}:{l.port} ({l.protocol}){l.virtual ? " · 仅展示，载荷走免杀投放器" : ""}</option>
             ))}
           </select>
         </div>
@@ -277,7 +277,7 @@ export function C2AgentBuilder() {
       <button
         className="flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-500 disabled:opacity-40"
         onClick={build}
-        disabled={busy || listeners.length === 0}
+        disabled={busy || listeners.length === 0 || sel?.virtual}
       >
         <CogIcon className="size-4" /> {busy ? "生成中…" : "生成 Agent 载荷"}
       </button>
@@ -298,7 +298,7 @@ export function C2AgentBuilder() {
         <button
           className="flex items-center gap-2 rounded bg-amber-500 px-4 py-2 font-medium text-zinc-950 hover:bg-amber-400 disabled:opacity-40"
           onClick={loaderBuild}
-          disabled={busy || listeners.length === 0}
+          disabled={busy || listeners.length === 0 || sel?.virtual}
         >
           <CogIcon className="size-4" /> {busy ? (aiPoly ? "AI 变形 + 编译中（约 1-3 分钟）…" : "编译中（约 1-3 分钟）…") : "生成免杀 EXE"}
         </button>
