@@ -1,4 +1,4 @@
-# 交接：FORANG/emp3r0r 融合运维 第四会话入口（2026-11-19 00:15）
+# 交接：FORANG/emp3r0r 融合运维 第四会话入口（2026-11-19 08:15）
 
 > 只读本文件即可接手。历史细节、完整命令速查、更早的坑位见
 > `HANDOVER-console-emp3r0r.md`（本文件不重复）。
@@ -45,6 +45,15 @@ TypeScript 类型检查在 next build 内）。资产批量匹配视图也已上
 /system/pocs 页 PocMatchCard 卡片——资产行手输或从资产库导入（api.assets），
 POST /pocs/match，命中行（ammo 命中的 CVE）直接投送；实测 freepbx 资产
 命中 CVE-2025-57819（critical）带映射。至此弹药库两阶段全部闭环。
+
+**载荷生成器"无可用监听器"事故已根治**（2026-11-19 08:00，goc2 `df52158`）：
+goc2 监听器原先只存内存 map，teamserver 重启即丢（beacon 不受影响——回连
+地址编译内嵌，但载荷生成需要 listener_id）。修复：goc2 加 `GOC2_DATA_DIR`
+持久化（listeners.json 原子落盘/启动恢复，创建/删除即写盘），compose 给
+goc2 挂 `./goc2-data:/data`。当前监听器：`forang-prod`（https goc2.allclb.com
+:443 → host nginx（certbot 证书）→ 127.0.0.1:18400），端到端验证：重启容器
+监听器保持、载荷生成 linux_elf 6.3MB 正常。注意 /root/forang-deploy 不是
+git 仓库，compose 改动只记录在本文件。
 
 
 ## 一、实况快照（全部实测）
