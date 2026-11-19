@@ -51,7 +51,9 @@ goc2 监听器原先只存内存 map，teamserver 重启即丢（beacon 不受�
 地址编译内嵌，但载荷生成需要 listener_id）。修复：goc2 加 `GOC2_DATA_DIR`
 持久化（listeners.json 原子落盘/启动恢复，创建/删除即写盘），compose 给
 goc2 挂 `./goc2-data:/data`。当前监听器：`forang-prod`（https goc2.allclb.com
-:443 → host nginx（certbot 证书）→ 127.0.0.1:18400），端到端验证：重启容器
+:443 → host nginx（certbot 证书）→ 127.0.0.1:18400）+ `emp3r0r-cc`（只读
+虚拟条目，EMP3R0R_C2_ENDPOINT=http://158.180.91.185:13456，emp3r0r 无监听器
+API、载荷走免杀投放器，前端生成按钮对其禁用），端到端验证：重启容器
 监听器保持、载荷生成 linux_elf 6.3MB 正常。`/root/forang-deploy` 已入 git
 （私有库 forang-deploy），compose 改动此后随手提交。
 
