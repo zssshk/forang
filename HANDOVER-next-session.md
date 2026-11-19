@@ -70,6 +70,7 @@ API、载荷走免杀投放器，前端生成按钮对其禁用），端到端�
 | 验收 agent | `emp3r0r-agent.service`（cc=127.0.0.1，别覆盖），goc2 `sess_1_e1417884`（goc2 重启后 beacon 重新注册，会话 ID 会变） |
 | SSH 别名 | `github-forang`/`github-goc2`/`github-emp3r0r` 各自独立（`Host github.com` 是 hghub 的 key，勿动）；git 全局身份已配（FORANG operator） |
 | 部署仓库 | `/root/forang-deploy` 已入 git（origin=`git@github-forang:zssshk/forang-deploy.git`，私有，`2892c1e` 起）；secrets/运行数据/构建产物在 .gitignore，模板见 `.env.example` |
+| DeskPilot 调查 | 目标 `172.232.34.164`（DeskPilot 员工监控 C2）协议级分析完成，独立报告与全部证据在 `/root/dsh-workspace/deskpilot-evidence/REPORT.md`（含 Ghidra 环境坑与下一步路线，新会话读它接手） |
 | 磁盘 | 90%（4.9G 可用）；`/root/go` 是容器免杀 GOROOT 挂载、`/root/android-ndk-cache` 是 ghostlock 构建链、`/root/.cache/qmd` 是检索模型——**都别清** |
 | 定时器 | `poc-sync.timer`（每日 06:00/18:00）已在跑 |
 
