@@ -52,8 +52,8 @@ goc2 监听器原先只存内存 map，teamserver 重启即丢（beacon 不受�
 持久化（listeners.json 原子落盘/启动恢复，创建/删除即写盘），compose 给
 goc2 挂 `./goc2-data:/data`。当前监听器：`forang-prod`（https goc2.allclb.com
 :443 → host nginx（certbot 证书）→ 127.0.0.1:18400），端到端验证：重启容器
-监听器保持、载荷生成 linux_elf 6.3MB 正常。注意 /root/forang-deploy 不是
-git 仓库，compose 改动只记录在本文件。
+监听器保持、载荷生成 linux_elf 6.3MB 正常。`/root/forang-deploy` 已入 git
+（私有库 forang-deploy），compose 改动此后随手提交。
 
 
 ## 一、实况快照（全部实测）
@@ -67,6 +67,7 @@ git 仓库，compose 改动只记录在本文件。
 | 双 C2 | goc2 `beacons=1`；emp3r0r `mcp_alive=true, active_target=800bc02b` |
 | 验收 agent | `emp3r0r-agent.service`（cc=127.0.0.1，别覆盖），goc2 `sess_1_44eb6bc2` |
 | SSH 别名 | `github-forang`/`github-goc2`/`github-emp3r0r` 各自独立（`Host github.com` 是 hghub 的 key，勿动）；git 全局身份已配（FORANG operator） |
+| 部署仓库 | `/root/forang-deploy` 已入 git（origin=`git@github-forang:zssshk/forang-deploy.git`，私有，`2892c1e` 起）；secrets/运行数据/构建产物在 .gitignore，模板见 `.env.example` |
 | 磁盘 | 90%（4.9G 可用）；`/root/go` 是容器免杀 GOROOT 挂载、`/root/android-ndk-cache` 是 ghostlock 构建链、`/root/.cache/qmd` 是检索模型——**都别清** |
 | 定时器 | `poc-sync.timer`（每日 06:00/18:00）已在跑 |
 
