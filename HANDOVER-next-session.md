@@ -65,7 +65,7 @@ goc2 挂 `./goc2-data:/data`。当前监听器：`forang-prod`（https goc2.allc
 | goc2 仓库 | `main` @ `3f340c7`，origin=`git@github-goc2:...`，干净 |
 | 面板 | docker compose `forang-deploy/artex`，127.0.0.1:8787 / forang.allclb.com，**密码已初始化** |
 | 双 C2 | goc2 `beacons=1`；emp3r0r `mcp_alive=true, active_target=800bc02b` |
-| 验收 agent | `emp3r0r-agent.service`（cc=127.0.0.1，别覆盖），goc2 `sess_1_44eb6bc2` |
+| 验收 agent | `emp3r0r-agent.service`（cc=127.0.0.1，别覆盖），goc2 `sess_1_e1417884`（goc2 重启后 beacon 重新注册，会话 ID 会变） |
 | SSH 别名 | `github-forang`/`github-goc2`/`github-emp3r0r` 各自独立（`Host github.com` 是 hghub 的 key，勿动）；git 全局身份已配（FORANG operator） |
 | 部署仓库 | `/root/forang-deploy` 已入 git（origin=`git@github-forang:zssshk/forang-deploy.git`，私有，`2892c1e` 起）；secrets/运行数据/构建产物在 .gitignore，模板见 `.env.example` |
 | 磁盘 | 90%（4.9G 可用）；`/root/go` 是容器免杀 GOROOT 挂载、`/root/android-ndk-cache` 是 ghostlock 构建链、`/root/.cache/qmd` 是检索模型——**都别清** |
