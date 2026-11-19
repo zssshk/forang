@@ -271,7 +271,11 @@ func c2xAgentShape(clients []any) []map[string]any {
 		if id == "" {
 			continue
 		}
+		// goc2 Client 的 JSON 字段是 last_seen；lastBeacon 是历史兼容名。
 		lastBeacon, _ := m["lastBeacon"].(string)
+		if lastBeacon == "" {
+			lastBeacon, _ = m["last_seen"].(string)
+		}
 		var ago any
 		if ts, err := time.Parse(time.RFC3339Nano, lastBeacon); err == nil {
 			v := int(now.Sub(ts).Seconds())
@@ -1011,18 +1015,34 @@ func (s *Server) c2xStats(w http.ResponseWriter, r *http.Request) {
 	if emp3r0rEnabled() {
 		clients = append(clients, emp3r0rListClients()...)
 	}
+	// 统一按最后心跳窗口判定在线（与前端 agentStatus 的 300s/1800s 阈值一致）。
+	// 不能用 m["status"]：goc2 的 Client 没有 status 字段，恒落 default 被算
+	// 成 offline——2 个在线目标只显示 1 个（2026-11-19 实测事故）。
+	now := time.Now()
 	total, online, idle, offline := 0, 0, 0, 0
 	for _, c := range clients {
-		if m, ok := c.(map[string]any); ok {
-			total++
-			switch m["status"] {
-			case "active":
-				online++
-			case "idle":
-				idle++
-			default:
-				offline++
+		m, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		total++
+		ago := 1e18
+		lb, _ := m["lastBeacon"].(string)
+		if lb == "" {
+			lb, _ = m["last_seen"].(string)
+		}
+		if lb != "" {
+			if ts, err := time.Parse(time.RFC3339Nano, lb); err == nil {
+				ago = now.Sub(ts).Seconds()
 			}
+		}
+		switch {
+		case ago < 300:
+			online++
+		case ago < 1800:
+			idle++
+		default:
+			offline++
 		}
 	}
 	var n24 int

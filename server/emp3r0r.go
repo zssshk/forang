@@ -207,6 +207,7 @@ func emp3r0rClientShape(tag string, a map[string]any) map[string]any {
 		"username":  get("user", "username"),
 		"os":        get("os", "os_type", "platform"),
 		"arch":      get("arch", "goarch"),
+		"lastBeacon": time.Now().Format(time.RFC3339Nano), // 前端 last_reply_ago 依赖此字段；bridge 拉到即视为活跃
 		"ip":        get("ip", "local_ip", "internal_ip"),
 		"listener":  "emp3r0r",
 		"status":    "active",
