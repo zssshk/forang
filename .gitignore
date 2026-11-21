@@ -61,3 +61,6 @@ Thumbs.db
 # 前端静态导出产物（构建时嵌入，不入库）
 /web/out/
 scripts/patch_*.py
+
+# 运维临时备份（KB 回滚产物等，不入库）
+/backups/
