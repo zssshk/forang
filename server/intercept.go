@@ -69,17 +69,39 @@ func reviewCompletion(ctx context.Context, prov llm.Provider, prompt string, inp
 	return streamCollectText(ctx, prov, prompt, string(user))
 }
 
-// streamCollectText runs a single non-streaming-style completion (thinking off,
-// low temperature, bounded output) and returns the concatenated text. The
-// budget includes the explanation and complete closing JSON delimiters.
+// streamDefaultMaxTokens is the output budget for auxiliary completions
+// (reviewer, supervisor, intercept, C2 analysis, reports). Their prompts ask
+// for essentially a short explanation followed by a complete closing JSON, which fits
+// in the default budget. Larger outputs (e.g. knowledge distillation) pass their own
+// budget via streamCollectTextBudget instead of raising this for everyone.
+const streamDefaultMaxTokens = 1024
+
+// streamCollectText runs a single completion on the default budget.
 func streamCollectText(ctx context.Context, prov llm.Provider, system, user string) (string, error) {
+	return streamCollectTextBudget(ctx, prov, system, user, streamDefaultMaxTokens)
+}
+
+// streamCollectTextBudget runs a single non-streaming-style completion with an
+// explicit output budget (low temperature, bounded output) and returns the concatenated text.
+//
+// Thinking is intentionally left unset (""): buildBody then inherits
+// Config.ThinkingType from the profile, and since every llm_profiles row currently
+// leaves thinking_type empty, no "thinking" field is sent. That is REQUIRED for
+// OpenAI-compatible endpoints that are not thinking-aware (DeepSeek / GLM / most
+// gateways reject it as an unknown field). Setting Thinking:"disabled" here would
+// force "thinking":{"type":"disabled"} into every request regardless of profile.
+//
+// Consequence to keep in mind: if a profile is ever switched to thinking_type
+// "enabled", these auxiliary calls inherit thinking mode too (and some providers
+// then demand reasoning_content be echoed back). Pin that profile's auxiliary
+// path to "none" explicitly when it happens. See norma/llm/openai.go buildBody.
+func streamCollectTextBudget(ctx context.Context, prov llm.Provider, system, user string, maxTokens int) (string, error) {
 	temp := 0.0
 	req := llm.CompletionRequest{
 		System:      []string{system},
 		Messages:    []llm.Message{llm.UserText(user)},
-		MaxTokens:   1024,
+		MaxTokens:   maxTokens,
 		Temperature: &temp,
-		Thinking:    "disabled",
 	}
 	var sb strings.Builder
 	for ev, err := range prov.Stream(ctx, req) {
@@ -357,7 +379,7 @@ func (s *Server) interceptDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Decision    string `json:"decision"` // "allowed" | "denied"
+		Decision    string `json:"decision"`     // "allowed" | "denied"
 		EditedInput string `json:"edited_input"` // 修改后放行：完整参数 JSON（哨兵可编辑放行）
 	}
 	if err := decode(r, &req); err != nil {

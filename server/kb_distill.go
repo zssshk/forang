@@ -23,6 +23,17 @@ import (
 
 const kbDistillInterval = 30 * time.Second
 
+// kbMaxTokens 蒸馏输出预算。知识总结是四个章节的 markdown（> 审查意见那种一两句
+// 解释 + JSON），1024 会在章节中途被截断，故单独抬高。不用 profile 的 max_tokens
+// 字段做兜底：它当前的语义是 "(0 = 不发送该字段, 由服务端默认)"（agent/provider.go:62），
+// 掺进来就得再区分 0 的两种含义，不值得。
+//
+// DeepSeek-V4.1-Flash 是默认开启思考的推理模型：思考 token 与正文共用本预算
+// （OpenAI 兼容语义下 ThinkingType 为空 = 不发 thinking 字段 ≠ 不思考）。
+// 4096 实测在第一条漏洞的**代码块**中途截断（1362 字符 / 7 章只写到 1 章）。
+// 16384 = 思考 + 完整四章正文的安全余量；若上游报 max_tokens 超限，按端点上限回落。
+const kbMaxTokens = 16384
+
 // kbSystemPrompt 蒸馏提示词（对齐 aipentest DISTILL_SYS_PROMPT 的四章结构）。
 const kbSystemPrompt = `你是渗透测试知识管理专家。把一次渗透测试任务的原始记录蒸馏成一份结构化 markdown 知识总结，供团队跨任务沉淀复用。
 
@@ -95,7 +106,7 @@ type kbTaskInfo struct {
 // kbFinding 蒸馏数据源里的一条漏洞。Target 字段承载原始请求包（packet 列）。
 type kbFinding struct {
 	Vulnclass, Summary, Severity, Target, Evidence string
-	Cvss                                         float64
+	Cvss                                           float64
 }
 
 // distillTask 收集任务知识数据 → LLM 蒸馏 → UPSERT kb_summaries + 切块索引。
@@ -276,10 +287,10 @@ func (s *Server) kbCallLLM(title, dataStr string) (string, string, error) {
 	if !ok {
 		return "", "", fmt.Errorf("模型 profile 不可用")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	text, err := streamCollectText(ctx, prov, kbSystemPrompt,
-		"总结标题："+title+"\n\n请基于以下数据生成知识总结：\n\n"+dataStr)
+	text, err := streamCollectTextBudget(ctx, prov, kbSystemPrompt,
+		"总结标题："+title+"\n\n请基于以下数据生成知识总结：\n\n"+dataStr, kbMaxTokens)
 	if err != nil {
 		return "", cfg.Model, err
 	}
@@ -392,7 +403,7 @@ func kbBow(text string) map[int]float64 {
 	}
 	m := map[int]float64{}
 	for i := 0; i+1 < len(r); i++ {
-		dim := int(crc32.ChecksumIEEE([]byte(string(r[i : i+2]))) % kbBowDim)
+		dim := int(crc32.ChecksumIEEE([]byte(string(r[i:i+2]))) % kbBowDim)
 		m[dim]++
 	}
 	var norm float64
@@ -407,8 +418,6 @@ func kbBow(text string) map[int]float64 {
 	}
 	return m
 }
-
-
 
 // indexKBSummary 总结切块入 kb_chunks（重建式：先删旧块）。
 func (s *Server) indexKBSummary(taskID int64, summaryMD string) {
