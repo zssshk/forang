@@ -13,6 +13,7 @@ import sys
 import urllib.request
 
 CVE_RE = re.compile(r"CVE-\d{4}-\d+", re.I)
+GATE_COOKIE = "/tmp/forang.gate"
 
 
 def cvss_to_severity(desc):
@@ -74,10 +75,17 @@ def entry_from_row(d, desc, src):
 
 
 def api(base, path, token, method="GET", body=None):
+    hdrs = {"Authorization": "Bearer " + token,
+            "Content-Type": "application/json"}
+    # gate 开启时 gateMiddleware 在最外层，无 cookie 一律裸 404（与路由不存在无法区分）。
+    # cookie 值由 poc-sync.sh 用 jwt.key + gate.token 复算后写入 GATE_COOKIE 文件。
+    if GATE_COOKIE and os.path.exists(GATE_COOKIE):
+        val = open(GATE_COOKIE, encoding="utf-8").read().strip()
+        if val:
+            hdrs["Cookie"] = "artex-gate=" + val
     req = urllib.request.Request(base + path, method=method,
                                  data=json.dumps(body).encode() if body else None,
-                                 headers={"Authorization": "Bearer " + token,
-                                          "Content-Type": "application/json"})
+                                 headers=hdrs)
     return json.load(urllib.request.urlopen(req, timeout=30))
 
 

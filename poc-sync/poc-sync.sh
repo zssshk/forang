@@ -37,6 +37,26 @@ s = b64(hmac.new(k, h + b'.' + p, hashlib.sha256).digest())
 open(sys.argv[1], 'w').write((h + b'.' + p + b'.' + s).decode())
 PYEOF
 
+# 2b) gate cookie（gate 开启时 gateMiddleware 在最外层，无 cookie 一律裸 404，
+#     与"路由不存在"无法从响应区分——这正是本脚本长期失败在 404 的原因）。
+#     cookie = hex(HMAC-SHA256(jwtKey, "artex-gate-v1|" + gateToken))，见 server/gate.go。
+GATE=/tmp/forang.gate
+GT=$(docker exec forang-deploy-postgres-1 psql -U "${POSTGRES_USER:-artex}" \
+       -d "${POSTGRES_DB:-artex}" -tA \
+       -c "select value from settings where key='gate.token';" 2>/dev/null | tr -d '[:space:]')
+if [ -n "${GT:-}" ]; then
+  python3 - "$GT" > "$GATE" <<'PYGATE'
+import hmac, hashlib, sys
+mac = hmac.new(open('/tmp/jwt.key', 'rb').read(),
+              b'artex-gate-v1|' + sys.argv[1].encode(), hashlib.sha256)
+print(mac.hexdigest(), end='')
+PYGATE
+  log "gate 已启用，cookie 已复算（${#GT} 位 token）"
+else
+  : > "$GATE"
+  log "gate 未启用，跳过 cookie"
+fi
+
 # 3) 增量导入
 log "开始导入"
 python3 "$SRC/import_pocs.py" "$REPO" "$BASE" "$TOKEN"
