@@ -1,6 +1,8 @@
 # 交接：FORANG/emp3r0r 融合运维 第五会话入口（2026-11-19 19:20）
 
-> 只读本文件即可接手。历史细节、完整命令速查、更早的坑位见
+> **最新会话（2026-11-20）新增 exploit_agent 项目与面板 TG/PoC 库集成，
+> 先读 `/root/dsh-workspace/handovers/handover-20261120-exploit-agent.md`。**
+> 本文件仍是 FORANG 存量主线的入口。历史细节、完整命令速查、更早的坑位见
 > `HANDOVER-console-emp3r0r.md`（本文件不重复）。
 
 ## 〇、第四会话增量（2026-11-19 全天）：弹药库全闭环 + goc2 持久化 + DeskPilot 调查
@@ -152,3 +154,76 @@ Oracle 安全组 13456+27286/磁盘清理——闭环。
 - **mcp.json 权限必须 600**；改 mcp.json 后必须 restart emp3r0r-bridge。
 - **容器重建后**：jwt.key 变（重签）；进程内 emp3r0r 任务快照清空（空列表
   正常）；goc2 重启后 beacon 会话 ID 会变（beacon 自动重新注册）。
+
+---
+
+## 附二、2026-11-22 夜间运维实录（emp3r0r 上游同步 + 面板版本化管理）
+
+> 以下全部为**实测**，无推测。若与上文冲突，以本节为准。
+
+### 1. emp3r0r 已同步上游 5.11.0 并上线
+
+| 项 | 值 |
+|---|---|
+| 上游 | `jm33-m0/emp3r0r` @ `upstream/v5` = `8e958c14`（release 5.11.0） |
+| 合并 | `v5` 合并 `upstream/v5`，合并提交 **`9e7da293`**（无冲突） |
+| 合并前回退点 | 分支 **`backup/v5-pre-sync-20261122`** → `995c467b` |
+| 本地独有提交 | `995c467b linux BOF: support arm64 agents end-to-end`（上游未合并） |
+| **线上二进制** | `/usr/local/bin/emp3r0r`，64,078,952 B，sha256 **`05701cc1d67cd3b0ada412ad939baefcfcf745d9f4efb229aa26990fc70d34c0`** |
+| **回滚二进制** | `/root/emp3r0r-backup-20261122/emp3r0r.bin`，sha256 **`2273890f6f22205c6c7127eddc1b78a57cd8a66e5193f3289c5114ddbec8f72f`**（11-17 版） |
+| bridge 原件 | 同目录 `emp3r0r-bridge.bin`，sha256 `21fc92d0459e4b189044a2a59bf6170770c533d5df88df27007e1d20cc6d4d45` |
+
+**上线验证（实跑）**：14:59:29 启新版 server → 15:00:44 目标 agent 回连
+`Updated agent 800bc02b (a7c03f26-…) with full data from CBOR` + `Issued AgentToken(cap=router)`。
+agent 进程（PID 656719，11-18 起）**未重启、未重投**，`poll-60` 一轮内自己回来 → **CA 未变，多 agent 侧无影响**。
+
+**注意**：`emp3r0r` 无 `--version` / `version` 子命令，二进制里 `vcs.revision` 也已被剥（只 `(devel)`）。
+**"线上是哪颗"只能靠 sha256 记账**。建议给 `emp3r0r` 加 `version` 子命令或在 banner 打 `def.Version`，否则下次升级仍要人工比对 50/64MB 文件哈希。
+
+### 2. 上游 5.10.x → 5.11.0 的 36 个提交，与本地相关的只有两条
+
+- `e1af84f4 fix: avoid SSE2` → `core/modules/Crystal-Kit/common.mk` 加 `-mno-sse2`。
+  根因：Crystal Palace 拼 section 不保留 `.rdata` 16 字节对齐，**对齐的 movdqa 在运行期 fault**。若 Windows 载荷出现"编译过、上线随机崩、不复现"，先查这条。
+- `771b7dbb` / `f51c6aa8` 等 → Crystal-Kit 提示词与产物命名微调。
+- 其余 33 条集中在 `core/internal/cc/detection/`（**detect loop 内部**），对 bridge/panel 无接口影响。
+
+### 3. 面板侧（forang）版本化管理已建立
+
+- `forang-src` 打 tag **`v0.6.0`**（annotated，指向 `84f6379`），并把 `v0.5.60` 起 44 个提交按功能域归并进 `CHANGELOG.md` 的 `## [0.6.0] - 2026-11-22`（+45 行，纯新增）。
+- 线上 artex 已按 `-ldflags "-s -w -X main.version=0.6.0"` 重建，`GET /api/health` → `{"version":"0.6.0"}` 实测通过。二进制 86MB（带 `-s -w`，比未剥离的 98MB 小）。
+- **构建命令已变**：以后重建 artex **必须带 ldflags 注入版本号**，裸 `go build -tags embedui` 会得到 `version:"dev"`。
+  标准命令（与 `build.sh:230` 等价）：
+  ```bash
+  cd /root/forang-src
+  PATH=/usr/local/go/bin:$PATH CGO_ENABLED=0 GOARCH=arm64 go build -tags embedui \
+    -ldflags "-s -w -X main.version=$(git describe --tags --always --dirty | sed 's/^v//')" \
+    -o /root/forang-deploy/dist/arm64/artex ./cmd/artex
+  ```
+- **检查更新仍是 `F0ran9/forang`**（`selfupdate/github.go:16` 硬编码 const，无环境变量覆盖）。该仓库私有且无 release，故"检查更新"永远报不到新版——**这是刻意的，不是 bug**。想让它查自己仓库需同时改 `Repo` + 加 `FORANG_GH_TOKEN` 认证 + 改 404 文案，今晚决定不做。
+
+### 4. poc-sync（弹药库日更）已修复
+
+- 故障：`poc-sync.sh` 只签 JWT 不带 gate cookie。gate 开启时 `gateMiddleware` 在最外层对无 cookie 请求返回**裸 404**（`gate.go:150`），与"路由不存在"在响应上**完全不可区分**，导致每日 06:00/18:00 两次同步长期静默失败（`HTTPError: 404`）。
+- 修法：cookie = `hex(HMAC-SHA256(jwtKey, "artex-gate-v1|" + gateToken))`（见 `gate.go:100-104`）；`jwtKey` 从容器 `/app/jwt.key` 取，`gateToken` 从 `settings.gate.token` 取。`poc-sync.sh` 新增 2b 步写入 `/tmp/forang.gate`，`import_pocs.py` 的 `api()` 读该文件非空时加 `Cookie: forang-gate=<val>`。**gate 关闭时文件为空，自动退化为不带头，两种配置都可跑。**
+- 实测：导入 60、跳过 129（库共 2000），exit 0。
+- 回滚点：`poc-sync/*.bak-20261122-before-gate-fix`。**等 11-22 18:00 那轮定时跑过、确认无报错后再删**。
+
+### 5. 本轮新坑（教训，比事实重要）
+
+- **`gate` 开启时，直连 8787 的一切 API observe 探测都会得到裸 404**，与"路径不存在"字节级不可区分。排查必须先带 `artex-gate` cookie，否则所有路由结论都是假的。今晚在此坑上浪费了 ~40 分钟并两次误判。
+- **`os/user.Current().HomeDir` 不读 `$HOME`**，它读 `/etc/passwd`。想用 `HOME=xxx` 隔离 emp3r0r 状态目录（双开验证）**必然失败**：它照样加载 `/root/.emp3r0r/wg_config.json` 并抢同一批端口。消息里若有人建议 `HOME=` 隔离，直接跳过。
+- **`emp3r0r server` 每次启动都会重写 `~/.emp3r0r/ca-cert.pem` 和 `emp3r0r.json`**。这不影响 agent 信任（CA 私钥 `ca-key.pem` 是稳定的，由它重签），但**别拿这两个文件的 mtime 当"服务是否被重启"的判据**。
+- **`--operator-port` 与日志里的 "Operator Port (WG)" 是两个字段**：前者是 WireGuard UDP 端口（旧版 unit 里 13377），后者是里面那个 HTTP 服务的端口（旧版固定 13377+1=13378 由配置推出）。看日志与看 unit 容易错位。
+- **heredoc 结束符**：今晚多次 `MSGEOF`/`PYEOF` 被写成 `MSGEOFrom`、`PYENDoom`、`EndOfSms` 之类的残词，导致整段误当 Python/heredoc 内部语句执行，只跑了前面几行（一次把 `import_pocs.py` 打了个半改）。**写完 heredoc 要当场核对 `cat -A` 的尾行**；或者干脆不用 heredoc，改用 `write` 工具落文件。
+
+### 6. 实况快照（2026-11-22 15:2x）
+
+| 项 | 状态 |
+|---|---|
+| `emp3r0r server` | PID 3236435，新版 `05701cc1…`，13456/27286/13377(udp) 监听 |
+| `emp3r0r bridge` | PID 3237440，`172.17.0.1:18660` 监听；`emp3r0r mcp` 子进程 3237447 存活 |
+| agent `800bc02b` | 在线，PID 656719（11-18 起未重启），AgentToken(router) 24h 有效 |
+| 面板 artex | `0.6.0`，8787，容器 Up 数小时 |
+| `v0.6.0` tag | 已推远端 `zssshk/forang` |
+| `poc-sync` 修复 | 已推远端（`a130925`） |
+| 待办 | ①18:00 验证 poc-sync 定时轮 ②清 `poc-sync/*.bak-20261122-*` ③给 emp3r0r 加 version 子命令 |
