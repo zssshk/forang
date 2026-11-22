@@ -4,6 +4,51 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-22
+
+从 `v0.5.60`（上游 F0ran9/forang 最后一个 tag）起的 44 个提交合并为一个功能版本。按「新增能力 / 修复 / 部署」分组，不逐提交罗列。
+
+### 第二 C2 后端：emp3r0r
+
+- **融合架构**：emp3r0r 作为与 goc2 并列的第二 C2 后端。宿主机侧 `cmd/emp3r0r-bridge` 持有 WireGuard 凭据、spawn `emp3r0r mcp` 子进程做 MCP stdio 客户端，把目标/执行/job 输出封装成 localhost REST；`server/emp3r0r.go` 为 FORANG 侧适配层。会话与任务以 `emp3r0r:` 前缀命名空间化，与 goc2 的 `sess_`/`task_` 天然区分（`b4297c8`）。
+- **Classic 控制台全量覆盖**：会话列表可见、sysinfo 与敏感文件搜集分流、插件执行与资料库取回、任务列表查询（`e0e0b09` `f3ef359` `8853aab` `1ff7334` `f3bfca6`）。
+- **虚拟监听器条目**：`EMP3R0R_C2_ENDPOINT` 注入只读的 emp3r0r-cc 条目（`virtual:true`），前端生成按钮对其禁用——emp3r0r 载荷走免杀投放器而非面板（`667b7c2`）。
+- **OPSEC 与队列修正**：被 OPSEC 拦截的命令不再报成功（`7503c8e`）；schedule `rm`/`clear` 改为按 FORANG 条目 id 删除，不再误按 crontab 行号（`244a936`）。
+- **在线统计修复**：goc2 的 `Client` 无 `status` 字段、字段名是 `last_seen` 而非 `lastBeacon`，导致活 beacon 被算 offline。改为心跳时间窗判定（<300s 在线 / <1800s 空闲）+ 双字段兜底 + emp3r0r = 侧补 `lastBeacon`（`1d7effe`）。
+- 已知缺口：交互 PTY 在 emp3r0r 上游未提供，非 bridge REST 遗漏。
+
+### 弹药库（PoC 投送）
+
+- **Classic 面板「弹药库」页签**：`GET/POST /api/tools/c2/classic/exploits[/deploy]`，上传核心抽成 `c2xPushBytes()` 与 files/upload 共用（emp3r0r 4KB 分块 / goc2 256KB）。仓库以只读方式挂进容器（`/poc-collection`），`POC_REPO` 可覆盖（`1b8cbc7`）。
+- **评分制选择器 v2**：递归扫描（3 层、跳过 docs/assets/evidence/tests），命名评分 `exploit > run.sh > *exploit* > *poc* > cve* > pwn* > ELF` 兜底 + 深度惩罚，覆盖率 19/60 → 53/60；每条带 `run_hint`（README 用法行）预填执行模板（`c0fc9cf`）。
+- **PoC 库联动**：`GET /api/pocs` 附加 `ammo` 映射（CVE→目录/exploit/hint，`ammoIndex()` 60s 缓存）；主面板命中条目带投送按钮，双后端任选（`91e7a7f`）。
+- **资产批量匹配**：PocMatchCard，资产手工录入或从资产库导入，命中行直接投送（`36cff4d`）。
+
+### 免杀载荷
+
+- **linux/arm64 memfd 加载器**（`evasion-linux/`）：`pack.py` 把 agent ELF 做 zlib 压缩 + AES-256-CTR 加密为 `payload.enc`，`loader.go` 运行时 `memfd_create` + `fexecve` 内存执行，磁盘零落盘，`/proc/<pid>/exe` 显示 `memfd:[kworker/u9:2] (deleted)`，argv0 可 `-ldflags -X` 伪装。纯标准库，离线可编（`4f0b08b`）。
+- **Windows 三套技术接线补齐**：`technique3` 原本未接线的防御逻辑接入真实防御链，`technique1` 补 VEH 内存保护（`2e84488`）。
+
+### MCP 操作面
+
+- **`cmd/forang-mcp`**：FORANG 操作面的 MCP stdio server（行分隔 JSON-RPC 2.0，2025-06-18，协议层自绘、纯标准库）。把 C2 会话/命令执行/任务结果/载荷与免杀生成/交互 PTY 暴露为 MCP tools，供 Claude Code、Codex 等外部 harness 以自然语言操作（`108f44c`）。
+- 注：当前无 MCP 客户端鉴权，能力面等同于持凭据直连。
+
+### 知识库
+
+- **蒸馏输出预算修正**：`streamCollectText` 拆出 `streamCollectTextBudget(…, maxTokens)`，辅助调用统一 1024，知识库蒸馏单独 16384。原先 11 个调用点共用一个硬编码 `MaxTokens: 1024` **以及** `Thinking: "disabled"`——后者会让请求体无条件带上 `"thinking"` 字段，DeepSeek/GLM 一类 OpenAI 兼容端点直接 400 拒。实测 4096 在第一条漏洞的代码块中途截断（1362 字符/7 条只写 1 条），16384 通过（10568 字符/7 条全/5 章节完整）。蒸馏超时 3min→5min（`75efd9f`）。
+- 注意：辅助调名的预算与`Thinking` 现由各 profile 的 `thinking_type` 决定。若某 profile 改为 `enabled`，这些调用会跟着进入思考模式。
+
+### PoC 仓库自动同步
+
+- **`poc-sync`**：systemd timer 每日 06:00 / 18:00 从 `zssshk/poc-collection` 拉增量，按 CVE（无 CVE 则按 title）幂等导入 FORANG PoC 库（`04806e1`）。
+- **修复**：脚本原先只签 JWT **不带 gate cookie**，而 gate 开启时 `gateMiddleware` 在最外层对无 cookie 请求裸 404——与“路由不存在”不可区分，导致每日两次同步长期静默失败。现由 `jwt.key` + `settings.gate.token` 复算 `artex-gate` cookie（`gate.go:100`），gate 关闭时退化为空值不影响。实测导入 60 条、跳过 129 条，库共 2000。
+
+### 部署
+
+- **面板脱离预构建镜像**：compose 改为从本地源码构建 artex（引入 `Dockerfile`），不再拉取 `autumn27/artex` 上游镜像（`200ac3b`）。
+- **部署仓库独立版本化**并为私仓（`a4b3907`）；`evasion-linux` 工具链及载荷一并入库（`9124065`）。
+
 ## [0.5.65] - 2026-11-12
 
 ### Webshell
