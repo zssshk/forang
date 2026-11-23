@@ -25,10 +25,15 @@ HEAD=$(git -C "$REPO" rev-parse --short HEAD)
 log "repo HEAD=$HEAD"
 
 # 2) 重签 JWT（面板密码无关；jwt.key 容器重建后变化）
-docker cp forang-deploy-artex-1:/app/jwt.key /tmp/jwt.key >/dev/null
+# key 用 mktemp 落盘：固定 /tmp/jwt.key 在容器重建后旧文件属主变 root，
+# sticky /tmp 下运行用户无法覆盖，docker cp 报 RemoveAll EPERM（2026-11-23 实测）。
+KEYFILE=$(mktemp /tmp/jwt.key.XXXXXX)
+export KEYFILE
+trap 'rm -f "$KEYFILE"' EXIT
+docker cp forang-deploy-artex-1:/app/jwt.key "$KEYFILE" >/dev/null
 python3 - "$TOKEN" <<'PYEOF'
-import hmac, hashlib, base64, json, time, sys
-k = open('/tmp/jwt.key', 'rb').read()
+import hmac, hashlib, base64, json, os, time, sys
+k = open(os.environ['KEYFILE'], 'rb').read()
 b64 = lambda d: base64.urlsafe_b64encode(d).rstrip(b'=')
 h = b64(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(',', ':')).encode())
 p = b64(json.dumps({"sub": "FORANG", "exp": int(time.time()) + 7 * 86400},
@@ -46,8 +51,8 @@ GT=$(docker exec forang-deploy-postgres-1 psql -U "${POSTGRES_USER:-artex}" \
        -c "select value from settings where key='gate.token';" 2>/dev/null | tr -d '[:space:]')
 if [ -n "${GT:-}" ]; then
   python3 - "$GT" > "$GATE" <<'PYGATE'
-import hmac, hashlib, sys
-mac = hmac.new(open('/tmp/jwt.key', 'rb').read(),
+import hmac, hashlib, os, sys
+mac = hmac.new(open(os.environ['KEYFILE'], 'rb').read(),
               b'artex-gate-v1|' + sys.argv[1].encode(), hashlib.sha256)
 print(mac.hexdigest(), end='')
 PYGATE
