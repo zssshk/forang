@@ -23,7 +23,7 @@
 - 🧠 **LLM 是渗透引擎，不是聊天窗口** — planner / worker / supervisor 多 Agent 协同：目标自动拆解为意图链，worker 领取意图驱动真实工具进攻，探索链路图（目标→意图→事实→漏洞）全程持久化，`steer_work` 运行中实时纠偏不打断。
 - ⚔️ **攻击动作全链入图，进攻过程可审计** — 侦察（指纹/端口/目录扫描）、突破（免杀马生成/上传落地/命令执行）、控制（C2 指挥/Beacon 部署）每一类动作自动写成链路图一等节点，连失败尝试都留痕；Word / Markdown 报告自动生成「攻击动作痕迹」时间线 —— **webshell 落地了吗、什么时候、哪条命令拿到 root，报告里逐条可查**。
 - 🐉 **Webshell 管理器（哥斯拉式作业习惯）** — 蚁剑 raw / 冰蝎 aes / 哥斯拉 xor 三协议**加密字节级兼容**（与原版实现逐字节回归断言）；L0/L1/L2 三级免杀生成（函数拆分/临时文件 include 链/垃圾膨胀/API 替换），对真实 ClamAV+YARA 引擎验证；Tomcat Filter 内存马注入/枚举/移除全生命周期；会话工作台含文件管理、数据库、内网代理、截屏。
-- 🕹️ **C2 指挥台（CS 式作业习惯 + Classic 控制台双形态）** — 对接自研 goc2 teamserver（Go 单二进制）：**Classic 控制台** 12 面板（终端/定时/文件/进程/网络探测/插件/攻击链路图/反弹 Shell(PTY)/资料库/隧道/报告/系统信息），SSE 实时回显；**Windows 全面板原生适配**（GBK 输出转码 / 引号安全 stdin 注入 / CREATE_NO_WINDOW 零弹窗 / -H windowsgui 零黑框，CS/vshell 式无窗体验）；**载荷工程 9 平台格式**（win exe/x86/DLL/garble 混淆、linux elf/arm64/g、macOS 双架构）+ **T0/T1/T3 免杀加载器**（随机密钥 + IPv4 混淆 + ETW/AMSI 补丁 + NTDLL 脱钩 + AI 源码级多态变形编译验证）；回连地址自动解析 + 云部署手动覆盖；SOCKS5 隧道 / 端口转发 / AI 一键内网穿透；**AI 自动驾驶**持续「分析→决策→执行」循环；上线钉钉/飞书实时推送。
+- 🕹️ **C2 指挥台（CS 式作业习惯 + Classic 控制台双形态）** — 对接双 C2 后端（自研 goc2 teamserver Go 单二进制 + emp3r0r 经 bridge/MCP 融合，会话 `emp3r0r:` 前缀命名空间化）：**Classic 控制台** 12 面板（终端/定时/文件/进程/网络探测/插件/攻击链路图/反弹 Shell(PTY)/资料库/隧道/报告/系统信息），SSE 实时回显；**Windows 全面板原生适配**（GBK 输出转码 / 引号安全 stdin 注入 / CREATE_NO_WINDOW 零弹窗 / -H windowsgui 零黑框，CS/vshell 式无窗体验）；**载荷工程 9 平台格式**（win exe/x86/DLL/garble 混淆、linux elf/arm64/g、macOS 双架构）+ **T0/T1/T3 免杀加载器**（随机密钥 + IPv4 混淆 + ETW/AMSI 补丁 + NTDLL 脱钩 + AI 源码级多态变形编译验证）；回连地址自动解析 + 云部署手动覆盖；SOCKS5 隧道 / 端口转发 / AI 一键内网穿透；**AI 自动驾驶**持续「分析→决策→执行」循环；上线钉钉/飞书实时推送。
 - 🔗 **漏洞发现 → 拿权 → 控制，一条链自动打通** — `auto_escalate` 复合工具四场景联动：发现上传漏洞即自动生成免杀马、部署、PONG 验证、执行 `id` 拿真实回显、入库 Webshell 管理器；发现命令执行直连验证；已有 Webshell 可一键升级 C2 Beacon。指纹识别命中组件即自动匹配 POC 库并联动创建渗透任务。
 - 🛡️ **AI 审批监管：AI 管 AI** — 未命中规则的工具调用交由**裁判小模型**实时审查（D1-D6 破坏判据 / A1-A6 放行判据 / 判不准转人工），judge 失败 fail-closed；监督员定时巡视活动流注入避险建议（guarded/offensive/stealth 等五策略）；人工审批队列 + 全量调用流水 + 真实拦截率统计。
 - 🔍 **源码审计（静态，不出网不执行）** — 上传源码 zip（流式 2GB + 防 zip bomb/路径穿越），AI 多 Agent 只读审计（Read/Grep/Glob 工具面按任务收口：无 Bash/无出网/无攻击工具）：接口清点与权限判定（公开/登录/管理员/内部接口）、SQL 注入/命令执行/SSRF/路径穿越/硬编码凭据，每条漏洞带 文件:行号 + 代码片段，数据流三步确认（参数可控→校验缺失→到达 Sink）+ 对抗式自检降误报。实测自建漏洞源码包 6/6 全检出。
@@ -86,7 +86,7 @@ Token 消耗全程可查（每任务 2~4M input tokens、100~180 次 LLM 调用�
 | 🎯 **AI 渗透引擎** | planner/worker/supervisor 多 Agent 协同 · 探索链路图持久化 · 运行中纠偏（steer_work）· 目标/约束运行时注入 · 预算与收尾 · 任务容器化（可选 kali 容器隔离 Bash）· 批量资产战役 |
 | 🗺️ **攻击动作留痕** | 侦察（指纹/端口/目录）→ 突破（免杀马/上传/命令执行）→ 控制（C2/Beacon）八类动作节点入图 · 播报板时间线 · 报告动作痕迹章节 |
 | 🐉 **Webshell 体系** | 蚁剑/冰蝎/哥斯拉三协议字节级兼容 · 7 语言生成器 · L0/L1/L2 免杀（真实 AV 引擎验证）· Tomcat 内存马全生命周期 · 会话工作台（文件/数据库/内网/截屏/PHP 工具）· Header Gate 防扫 |
-| 🕹️ **C2 指挥** | goc2 teamserver（Go 自研）· CS 式指挥台 + Classic 12 面板控制台 · Windows 全适配（GBK 转码/stdin 注入/零窗口）· 载荷 9 平台（exe/DLL/garble/elf/macOS）· T0/T1/T3 免杀加载器 + AI 多态变形 · 反弹 Shell(ConPTY) · 资料库 · SOCKS5/端口转发 · AI 自动驾驶 · 插件系统 · 上线 IM 推送 · 审计防篡改（链式哈希） |
+| 🕹️ **C2 指挥** | goc2 + emp3r0r 双后端（Go 自研 / bridge 融合）· CS 式指挥台 + Classic 12 面板控制台 · Windows 全适配（GBK 转码/stdin 注入/零窗口）· 载荷 9 平台（exe/DLL/garble/elf/macOS）· T0/T1/T3 免杀加载器 + AI 多态变形 · 反弹 Shell(ConPTY) · 资料库 · SOCKS5/端口转发 · AI 自动驾驶 · 插件系统 · 上线 IM 推送 · 审计防篡改（链式哈希） |
 | 🛡️ **审批监管** | 规则引擎（allow/deny/ask）· LLM 裁判兜底（fail-closed）· 人工审批队列 · 监督员五策略巡视 · 资产黑名单 · 全量调用流水 · 真实拦截率 |
 | 🌐 **三端渗透** | Web / 小程序（wxapkg 反编译解析）/ APP（APK/IPA 静态 + 模拟器动态 + frida 脱壳 Hook + 代理抓包建模）三端预设 Agent |
 | 🔧 **独立模块** | C2 指挥（Classic 控制台）与 Webshell 管理器独立一级导航 · 工具箱保留 Repeater 重放+取证截图 · 端口/目录扫描 · CyberChef 中文版 · MuMu 模拟器 |
@@ -161,8 +161,10 @@ go build -tags embedui -o forang ./cmd/artex
 
 ## 版本
 
-当前 **v0.5.65**（2026-11-12，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+当前 **v0.6.0**（2026-11-22，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
 
+- **第二 C2 后端 emp3r0r 融合**：宿主机侧 bridge（持 WireGuard 凭据 + spawn `emp3r0r mcp`）把 emp3r0r 封装成本地 REST，会话/任务以 `emp3r0r:` 前缀与 goc2 并列；Classic 控制台全量覆盖（会话/sysinfo/敏感文件搜集/插件/资料库/任务列表），`EMP3R0R_C2_ENDPOINT` 注入只读虚拟监听器（载荷走免杀投放器）；在线统计改按心跳时间窗判定（活 beacon 不再被算 offline）
+- **面板弹药库与 PoC 联动**：exploits 上传/投送（双后端分块：emp3r0r 4KB / goc2 256KB）、选择器 v2（评分制递归扫描，53/60 命中）、`GET /api/pocs` 附 CVE→弹药映射、资产批量匹配一键投送；MCP 运营面、KB 蒸馏、每日 PoC 同步（gate cookie 修复）
 - **Webshell 双载体（脚本 + Java 动态载荷）**：Java 载体源码进仓库、首次调用 `javac --release 8` 运行时编译（不内置 .class），只发字节码给 JSP 载体 `defineClass`，目标端没有脚本引擎也能用；插件面与脚本载体对齐——数据库直连（支持 classpath 外驱动 `jar_path`）、内网端口扫描、进程/连接枚举（不依赖 netstat/tasklist）、Servlet/Filter 枚举、jar 动态装载、远程截屏、zip/unzip（带 Zip Slip 防护）
 - **内存马跨容器**：Tomcat（FilterDef/FilterMap 注册）、Jetty 9.4/10/11（ServletHandler `_filters` + 链缓存失效）实测可用，门禁头触发、可列出、可卸载；Undertow 这类容器实测拒绝运行期注册 Filter（UT010041）会**如实报错**而不是假装成功
 
@@ -186,6 +188,7 @@ go build -tags embedui -o forang ./cmd/artex
 - 许可证：AGPL-3.0（见 LICENSE）。
 
 <!-- ver-note -->
+> v0.6.0：emp3r0r 第二 C2 后端（bridge/MCP 融合，Classic 控制台全量覆盖）· 面板弹药库（exploits 投送 / 选择器 v2 / PoC 联动）· 免杀投放器 · MCP 运营面 · KB 蒸馏 · 每日 PoC 同步。
 > v0.5.65：zip/unzip 失败回显带原因与路径，空包/非 zip 不再回 OK 0。
 > v0.5.64：PHP 载体 zip/unzip 与 Java 对齐（空目录保留、解包挡越界条目）。
 > v0.5.63：控制台新增「压缩解压」面板（目标机内打包/解包，PHP 与 Java 载体共用，目标路径可自动推导）。
