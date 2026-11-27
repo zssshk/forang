@@ -165,6 +165,7 @@ go build -tags embedui -o forang ./cmd/artex
 
 - **第二 C2 后端 emp3r0r 融合**：宿主机侧 bridge（持 WireGuard 凭据 + spawn `emp3r0r mcp`）把 emp3r0r 封装成本地 REST，会话/任务以 `emp3r0r:` 前缀与 goc2 并列；Classic 控制台全量覆盖（会话/sysinfo/敏感文件搜集/插件/资料库/任务列表），`EMP3R0R_C2_ENDPOINT` 注入只读虚拟监听器（载荷走免杀投放器）；在线统计改按心跳时间窗判定（活 beacon 不再被算 offline）
 - **面板弹药库与 PoC 联动**：exploits 上传/投送（双后端分块：emp3r0r 4KB / goc2 256KB）、选择器 v2（评分制递归扫描，53/60 命中）、`GET /api/pocs` 附 CVE→弹药映射、资产批量匹配一键投送；MCP 运营面、KB 蒸馏、每日 PoC 同步（gate cookie 修复）
+- **知识库模型独立设置**：蒸馏模型与评审模型解耦（新增 `kb.profile_id`，按「知识库 → 评审 → 默认模型」三级回落）；LLM 页「评审与知识库模型」卡片可分别切换评审模型（finding 评审 / 拦截裁判 / C2 分析共用）与知识库模型（蒸馏专用，「跟随评审员」= 与评审模型相同），改完即时生效，无需重启
 - **Webshell 双载体（脚本 + Java 动态载荷）**：Java 载体源码进仓库、首次调用 `javac --release 8` 运行时编译（不内置 .class），只发字节码给 JSP 载体 `defineClass`，目标端没有脚本引擎也能用；插件面与脚本载体对齐——数据库直连（支持 classpath 外驱动 `jar_path`）、内网端口扫描、进程/连接枚举（不依赖 netstat/tasklist）、Servlet/Filter 枚举、jar 动态装载、远程截屏、zip/unzip（带 Zip Slip 防护）
 - **内存马跨容器**：Tomcat（FilterDef/FilterMap 注册）、Jetty 9.4/10/11（ServletHandler `_filters` + 链缓存失效）实测可用，门禁头触发、可列出、可卸载；Undertow 这类容器实测拒绝运行期注册 Filter（UT010041）会**如实报错**而不是假装成功
 
