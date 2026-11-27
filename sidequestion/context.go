@@ -100,8 +100,15 @@ func (b *contextBuilder) summarize(ctx context.Context, prior, text string) (str
 			n--
 		}
 		part := text[:n]
+		// No hardcoded Thinking here (cf. 75efd9f on streamCollectText): an empty
+		// value falls back to the profile's Config.ThinkingType, and every
+		// llm_profiles row has an empty thinking_type, so no `thinking` field is
+		// sent at all. Sending {"type":"disabled"} breaks New API chat
+		// completions (400) and is rejected by Claude Sonnet 5.5 (BaaRai #550),
+		// which wants {"type":"between_tools"} instead. Omitting the field is
+		// safe on both the OpenAI-compatible and the Anthropic paths.
 		req := llm.CompletionRequest{
-			System: []string{summaryInstruction}, Thinking: "disabled", MaxTokens: 2048,
+			System: []string{summaryInstruction}, MaxTokens: 2048,
 			Messages: []llm.Message{llm.UserText("[此前摘要]\n" + prior + "\n[新材料片段]\n" + part)},
 		}
 		if EstimateInputTokens(req)+req.MaxTokens+512 > b.window {

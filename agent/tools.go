@@ -1231,9 +1231,11 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		"evidence_hint_id": idp("可选：本任务中对应此漏洞的提示节点 ID，自动携带其结构化 traffic_refs；不能引用继承提示或其他漏洞的提示"),
 		"traffic_refs": map[string]any{"type": "array", "description": "可选；HTTP/HTTPS 漏洞先检索并逐条核实请求/响应确实支持漏洞结论，再按复现顺序填写真实 ID。TCP 等非 HTTP 漏洞、未采集或找不到确切记录时省略或传 []，不阻止上报；可在 evidence 说明原因并提供其他可验证证据。不要猜测 ID、按域名/时间推定关联或仅为补包重复探测。用途 baseline 正常对照 / proof 漏洞证明 / verification 补充验证 / supporting 辅助证据。",
 			"items": obj(map[string]any{"traffic_id": str("traffic_search 返回的真实流量 ID"), "role": map[string]any{"type": "string", "enum": []string{"baseline", "proof", "verification", "supporting"}}, "note": str("该流量如何支持漏洞结论")}, "traffic_id")},
+		"force_register": map[string]any{"type": "boolean", "description": "可选：即使指纹去重会拦下本次上报也强制登记。只在被拦下之后、且新证据确实是另一个独立缺陷（不同端点、参数或根因）时用；被拦下的回答会说明它匹配了哪条已有 finding。"},
 	}, "vulnclass", "severity", "summary"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 		var a struct {
 			VulnClass, Name, Severity, Summary, Evidence, Packet string
+			ForceRegister                                        bool              `json:"force_register"`
 			IntentID                                             json.RawMessage   `json:"intent_id"`
 			AssetIDs                                             []json.RawMessage `json:"asset_ids"`
 			TrafficRefs                                          []db.TrafficRef   `json:"traffic_refs"`
@@ -1270,6 +1272,28 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 			a.Packet = ExtractPacketFromEvidence(a.Evidence)
 		}
 		input := db.RecordFindingInput{TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: pid(a.IntentID), VulnClass: a.VulnClass, Name: a.Name, Severity: a.Severity, Summary: a.Summary, Evidence: a.Evidence, Packet: a.Packet, Worker: t.worker, AssetIDs: pidList(a.AssetIDs)}
+		// Deterministic fingerprint dedup (BaaRai/ARTEX #589, #473): an exact
+		// fingerprint match against an already registered finding suppresses
+		// re-registration before any LLM triage. force_register is the way back
+		// out when the new evidence is in fact a distinct defect. FORANG has no
+		// LLM triage pass, so the fingerprint check is the only dedup gate here.
+		if !a.ForceRegister {
+			if dup, ok := t.fingerprintDuplicate(input); ok {
+				res := map[string]any{
+					"duplicate_of_finding_id":      dup.FindingID,
+					"duplicate_of_finding_node_id": dup.NodeID,
+					"dedup_source":                 "fingerprint",
+					"fingerprint":                  dup.Fingerprint,
+					"evidence_status":              "duplicate_not_registered",
+					"note": fmt.Sprintf("Deterministic fingerprint (%s) matched already registered finding_id %d (exploration node %d), so no new finding was created. "+
+						"To extend that finding with new evidence, call update_finding_report with finding_id=%d (it addresses the NODE id, not the findings-table id). "+
+						"If the new evidence is in fact a distinct defect (different endpoint, parameter or root cause), call report_finding again with force_register=true.",
+						dup.Fingerprint, dup.FindingID, dup.NodeID, dup.NodeID),
+				}
+				raw, _ := json.Marshal(res)
+				return actool.Text(fmt.Sprintf("finding matched existing finding_id %d (node %d, fingerprint %s) — not registered again\n%s", dup.FindingID, dup.NodeID, dup.Fingerprint, raw)), nil
+			}
+		}
 		var recorded *db.RecordedFinding
 		if t.findingRecorder != nil {
 			recorded, err = t.findingRecorder.Record(ctx, input, refs)
@@ -2048,7 +2072,7 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 // PlannerTools is the read + intent-generation + goal-judgement tool set.
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
 	return []actool.CoreTool{
-		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
+		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.knowledgeLookup(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),

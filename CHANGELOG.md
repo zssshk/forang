@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-27
+
+### 知识包 knowledge-pack（BaaRai/ARTEX PR #522 移植）
+
+- **内嵌数据**：`knowledge/` 目录，MITRE ATT&CK Enterprise 706 个技术、OWASP WSTG 133 个测试、MITRE CWE 956 个弱点；每条含 id、名称、分类、截断后的描述、`truncated` 标记、官方 URL；`knowledge/data/sources.json` 记录来源 URL、许可证、拉取日期与条数；许可证文本在 `knowledge/licenses/`，归属说明在 `knowledge/NOTICE`（数据文件保留各自许可证，不在仓库 AGPL-3.0 覆盖内）。
+- **只读工具**：planner 与 worker 新增 `knowledge_lookup`（`agent/knowledge_tool.go`），按 id（如 T1190、WSTG-ATHN-01、CWE-79）或关键词查，返回 id、名称、分类、截断后描述与官方 URL；供规划时选测试/技术、报 finding 或事实时引用编号。生成脚本 `scripts/knowledge/build.py` 可从官方源重建三份数据（提交前审 diff，即升一次包版本）。
+- **FORANG 的评审/蒸馏知识库（kb.profile_id）不受影响**，两套知识库互不相干。
+
+### finding 指纹去重（BaaRai/ARTEX PR #589 移植）
+
+- **确定性指纹**：`agent/finding_fingerprint.go`，SHA-256 over（归一化漏洞类别 + 资产 id/Host + 端点路径/参数名），三轴缺一不可，否则返回空、不拦（不误伤）。
+- **接线**：`report_finding` 写入前先查指纹（`db/finding_dedup_pool.go` 提供跨任务资产关联池与 finding 元数据查询，无需改表结构），命中已登记 finding 即返回 `duplicate_not_registered`（`dedup_source: fingerprint`），不再建新 finding；本任务、关联任务与共享资产的其他任务都在检查范围内。
+- **逃生口**：被拦后可用 `update_finding_report`（finding_id 传节点 id）给原 finding 补证据，或 `force_register=true` 强制登记确实是另一个缺陷的情况；已判 `false_positive`/`ignored`/`duplicate` 的 finding 不参与拦阻。
+- **差异**：FORANG 没有上游的 LLM triage 环节，指纹检查就是唯一的去重关口（上游是「指纹先行、LLM 复核」的两层）。
+
+### 修复
+
+- **旁路摘要去掉硬编码 `Thinking:"disabled"`**（`sidequestion/context.go:104`，BaaRai #550 同思路 + 本 fork 75efd9f 同款）：留空后回落到 profile 的 `Config.ThinkingType`，而全部 profile 的 `thinking_type` 均为空，故请求不再带 `thinking` 字段。`{"type":"disabled"}` 会被 New API 拒（400）与 Claude Sonnet 5.5 拒（#550 要求 `between_tools`）；不发该字段则 OpenAI 兼容与 Anthropic 两路都安全。
+
 ## [0.6.1] - 2026-11-27
 
 ### 知识库模型独立设置

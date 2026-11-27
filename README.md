@@ -161,7 +161,10 @@ go build -tags embedui -o forang ./cmd/artex
 
 ## 版本
 
-当前 **v0.6.1**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+当前 **v0.6.2**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+
+- **知识包 knowledge-pack（BaaRai/ARTEX #522 移植）**：二进制内嵌 MITRE ATT&CK Enterprise（706 个技术）、OWASP WSTG（133 个测试）、MITRE CWE（956 个弱点），每条含 id、名称、分类、截断后描述、`truncated` 标记与官方 URL；来源与许可证见 `knowledge/data/sources.json`、`knowledge/NOTICE` 与 `knowledge/licenses/`（数据文件保留各自许可证，不在 AGPL-3.0 覆盖内）；planner 与 worker 新增只读工具 `knowledge_lookup`（按 id 或关键词查，引用编号写进 finding/事实），生成脚本 `scripts/knowledge/build.py` 可从官方源重建数据
+- **finding 指纹去重（BaaRai/ARTEX #589 移植）**：`report_finding` 写入前先算确定性指纹（漏洞类别 + 资产/Host + 端点路径/参数，三轴缺一不可，否则不拦），命中已登记 finding 即以 `duplicate_not_registered`（`dedup_source: fingerprint`）拦下，不再建新 finding；被拦后可用 `update_finding_report`（finding_id 传节点 id）给原 finding 补证据，或 `force_register=true` 强制登记确实是另一个缺陷的情况；已判 `false_positive`/`ignored`/`duplicate` 的 finding 不参与拦阻。注意：FORANG 没有上游的 LLM triage 环节，指纹检查就是唯一的去重关口
 
 - **第二 C2 后端 emp3r0r 融合**：宿主机侧 bridge（持 WireGuard 凭据 + spawn `emp3r0r mcp`）把 emp3r0r 封装成本地 REST，会话/任务以 `emp3r0r:` 前缀与 goc2 并列；Classic 控制台全量覆盖（会话/sysinfo/敏感文件搜集/插件/资料库/任务列表），`EMP3R0R_C2_ENDPOINT` 注入只读虚拟监听器（载荷走免杀投放器）；在线统计改按心跳时间窗判定（活 beacon 不再被算 offline）
 - **面板弹药库与 PoC 联动**：exploits 上传/投送（双后端分块：emp3r0r 4KB / goc2 256KB）、选择器 v2（评分制递归扫描，53/60 命中）、`GET /api/pocs` 附 CVE→弹药映射、资产批量匹配一键投送；MCP 运营面、KB 蒸馏、每日 PoC 同步（gate cookie 修复）
@@ -189,6 +192,7 @@ go build -tags embedui -o forang ./cmd/artex
 - 许可证：AGPL-3.0（见 LICENSE）。
 
 <!-- ver-note -->
+> v0.6.2：知识包 knowledge-pack（ATT&CK 706 / WSTG 133 / CWE 956 内嵌 + 只读 knowledge_lookup 工具）· finding 指纹去重（report_finding 前确定性去重 + force_register 逃生口）· 修旁路摘要硬编码 Thinking:"disabled"（不再发 thinking 字段，New API 与 Anthropic 双兼容）。
 > v0.6.1：知识库模型独立设置（kb.profile_id 与评审模型解耦，LLM 页评审/知识库模型双下拉框）· 修复 /api/health 版本号显示（构建时注入版本号，不再是 dev）。
 > v0.6.0：emp3r0r 第二 C2 后端（bridge/MCP 融合，Classic 控制台全量覆盖）· 面板弹药库（exploits 投送 / 选择器 v2 / PoC 联动）· 免杀投放器 · MCP 运营面 · KB 蒸馏 · 每日 PoC 同步。
 > v0.5.65：zip/unzip 失败回显带原因与路径，空包/非 zip 不再回 OK 0。

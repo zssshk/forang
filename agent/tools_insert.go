@@ -655,6 +655,8 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.searchAllWorkerTraces(), t.getWorkerTrace(),
 		// node_detail：worker 拿到 intent_id/节点 id 后可查该节点完整详情（配合上面的回看）。
 		t.nodeDetail(),
+		// knowledge_lookup：报漏洞/事实时引用稳定的 ATT&CK/WSTG/CWE 编号，或执行意图时查一条测试方法。只读。
+		t.knowledgeLookup(),
 		// 三端载体（小程序/APP/Web 统一后端 API 资产）：只读，上传解析在控制台完成。
 		t.carrierParse(),
 		t.annotateTool(),
