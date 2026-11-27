@@ -8,6 +8,8 @@
 //     凭据工具会直接报不可用；
 //  4. v0.6.3 内网/蜜罐表结构：credentials / tunnels / pending_scope 与
 //     assets.honeypot_score 列（缺失只警告——首次启动时 schema 还没跑）；
+//  5. v0.6.4 证据分级/质量闭环表结构：finding_reviews / finding_dedup_events /
+//     finding_regressions 表与 findings.evidence_level 等列（同上，只警告）；
 //  5. 外部工具钉版清单（packaging/tools-manifest.json）：存在且哈希匹配为 OK，
 //     未钉版/找不到只警告，哈希不匹配才 FAIL。
 //
@@ -93,6 +95,13 @@ func runDoctor(args []string) int {
 					{"tunnels 表", "SELECT 1 FROM information_schema.tables WHERE table_name='tunnels'"},
 					{"pending_scope 表", "SELECT 1 FROM information_schema.tables WHERE table_name='pending_scope'"},
 					{"assets.honeypot_score 列", "SELECT 1 FROM information_schema.columns WHERE table_name='assets' AND column_name='honeypot_score'"},
+					// v0.6.4 证据分级/质量闭环表结构。
+					{"finding_reviews 表", "SELECT 1 FROM information_schema.tables WHERE table_name='finding_reviews'"},
+					{"finding_dedup_events 表", "SELECT 1 FROM information_schema.tables WHERE table_name='finding_dedup_events'"},
+					{"finding_regressions 表", "SELECT 1 FROM information_schema.tables WHERE table_name='finding_regressions'"},
+					{"findings.evidence_level 列", "SELECT 1 FROM information_schema.columns WHERE table_name='findings' AND column_name='evidence_level'"},
+					{"findings.confidence 列", "SELECT 1 FROM information_schema.columns WHERE table_name='findings' AND column_name='confidence'"},
+					{"findings.report_excluded 列", "SELECT 1 FROM information_schema.columns WHERE table_name='findings' AND column_name='report_excluded'"},
 				} {
 					var one int
 					if err := sqldb.QueryRowContext(ctx, q.sql).Scan(&one); err != nil {

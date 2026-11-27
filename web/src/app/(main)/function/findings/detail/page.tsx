@@ -26,6 +26,7 @@ import { statusMeta } from "@/lib/status";
 import type { Finding, FindingStatus, Severity } from "@/lib/types";
 
 import { FindingLineageView } from "./lineage";
+import { EvidenceBadges, FindingReviewPanel } from "./review";
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
 const FINDING_STATUSES: FindingStatus[] = [
@@ -147,6 +148,7 @@ function FindingDetailInner() {
           <Separator orientation="vertical" className="mx-1 h-4" />
           <StatusBadge domain="severity" value={finding.severity} dot />
           <StatusBadge domain="finding" value={finding.status} dot />
+          <EvidenceBadges finding={finding} />
           {finding.inherited && finding.source_task_id && (
             <Badge variant="outline">来源任务 #{finding.source_task_id} · 只读</Badge>
           )}
@@ -173,6 +175,7 @@ function FindingDetailInner() {
                 </CardContent>
               </Card>
               <FindingRetestPanel key={id} findingId={id} readOnly={finding.inherited} onCompleted={load} />
+              <FindingReviewPanel findingId={id} readOnly={finding.inherited} onReviewed={load} />
               {finding.packet ? (
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -280,6 +283,22 @@ function FindingDetailInner() {
                         </SelectGroup>
                       </SelectContent>
                     </Select>
+                  )}
+                </FieldRow>
+
+                {/* 证据等级（v0.6.4 Pojun 分级） */}
+                <FieldRow label="证据等级">
+                  {finding.evidence_level ? (
+                    <div className="flex flex-col items-end gap-1">
+                      <StatusBadge domain="evidence" value={finding.evidence_level} />
+                      <span className="text-xs text-muted-foreground">
+                        置信度：
+                        {finding.confidence === "high" ? "高" : finding.confidence === "medium" ? "中" : finding.confidence === "low" ? "低" : "—"}
+                        {finding.report_excluded ? " · 未达交付标准" : ""}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground">未分级</span>
                   )}
                 </FieldRow>
 

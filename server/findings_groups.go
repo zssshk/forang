@@ -37,6 +37,8 @@ func findingFilterFromQuery(q url.Values) db.FindingFilter {
 		Query:      q.Get("q"),
 		Sort:       q.Get("sort"),
 		AssetScope: strings.TrimSpace(q.Get("asset_scope")),
+		// v0.6.4 证据分级筛选：evidence_level=L1|L2|L3|L4。
+		EvidenceLevel: normFilter(q.Get("evidence_level")),
 	}
 }
 

@@ -63,6 +63,14 @@ const severity: Record<string, StatusMeta> = {
   low: { label: "低危", tone: "slate" },
 };
 
+// v0.6.4 证据分级（Pojun L1–L4 口径）：等级越高证据越强。
+const evidence: Record<string, StatusMeta> = {
+  L1: { label: "L1 线索", tone: "slate" },
+  L2: { label: "L2 行为异常", tone: "amber" },
+  L3: { label: "L3 可利用", tone: "blue" },
+  L4: { label: "L4 业务影响", tone: "green" },
+};
+
 const finding: Record<string, StatusMeta> = {
   pending: { label: "待处理", tone: "amber" },
   in_progress: { label: "处理中", tone: "blue" },
@@ -113,6 +121,7 @@ const maps = {
   intent,
   task,
   severity,
+  evidence,
   finding,
   engine,
   goal,

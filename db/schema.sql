@@ -1112,6 +1112,65 @@ CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status, created_at DE
 -- 「按资产」视图靠 asset_ids @> '[<id>]' 反查发现,没有这个 GIN 索引就是全表扫。
 CREATE INDEX IF NOT EXISTS idx_findings_asset_ids ON findings USING GIN(asset_ids jsonb_path_ops);
 
+-- v0.6.4 证据分级（Pojun L1–L4 移植）：evidence_level L1 线索 / L2 行为异常 / L3 可利用 /
+-- L4 业务影响（空 = v0.6.4 之前的旧行，未分级）；confidence low/medium/high；
+-- report_excluded：critical/high 且实测低于 L3 时为真，默认不进正式报告（报告里单列标注，
+-- 不静默丢弃）。旧行保持默认值，由后续复核/重登记补分级。
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS evidence_level TEXT NOT NULL DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS confidence TEXT NOT NULL DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS report_excluded BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_findings_evidence_level ON findings(evidence_level, created_at DESC);
+
+-- v0.6.4 质量闭环：复核记录。verdict：confirmed 确认 / downgraded 降级 / rejected 驳回。
+-- prev/new 同时记状态与严重度，驳回/降级的 finding 留痕可查，不静默消失。
+CREATE TABLE IF NOT EXISTS finding_reviews (
+    id BIGSERIAL PRIMARY KEY,
+    finding_id BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    reviewer TEXT NOT NULL DEFAULT 'operator',
+    verdict TEXT NOT NULL CHECK (verdict IN ('confirmed','downgraded','rejected')),
+    note TEXT NOT NULL DEFAULT '',
+    prev_status TEXT NOT NULL DEFAULT '',
+    new_status TEXT NOT NULL DEFAULT '',
+    prev_severity TEXT NOT NULL DEFAULT '',
+    new_severity TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_finding_reviews_finding ON finding_reviews(finding_id, id DESC);
+
+-- v0.6.4 质量闭环：指纹去重事件。report_finding 被 v0.6.2 确定性指纹拦下时也写一条，
+-- 复报可查（finding_id 为命中那条已有 finding；拦下时不建新 finding 行）。
+CREATE TABLE IF NOT EXISTS finding_dedup_events (
+    id BIGSERIAL PRIMARY KEY,
+    finding_id BIGINT REFERENCES findings(id) ON DELETE SET NULL,
+    fingerprint TEXT NOT NULL DEFAULT '',
+    task_id BIGINT REFERENCES tasks(id) ON DELETE SET NULL,
+    vulnclass TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_finding_dedup_events_finding ON finding_dedup_events(finding_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_finding_dedup_events_fp ON finding_dedup_events(fingerprint, created_at DESC);
+
+-- v0.6.4 确定性回归 spec（Pojun finding_regressions 轻量版）：finding 入库时若绑了
+-- proof 流量即生成一条可重放断言的 spec（token > diff > status）；只记录 spec，
+-- 不自动回放、不自动向目标发请求（回放须人工触发，后续版再做）。
+CREATE TABLE IF NOT EXISTS finding_regressions (
+    id BIGSERIAL PRIMARY KEY,
+    finding_id BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    baseline_traffic_id TEXT NOT NULL DEFAULT '',
+    proof_traffic_id TEXT NOT NULL DEFAULT '',
+    method TEXT NOT NULL DEFAULT 'GET',
+    url TEXT NOT NULL DEFAULT '',
+    assertion TEXT NOT NULL DEFAULT 'status',
+    expected_status INTEGER NOT NULL DEFAULT 0,
+    token TEXT NOT NULL DEFAULT '',
+    last_verdict TEXT NOT NULL DEFAULT '',
+    last_checked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(finding_id)
+);
+CREATE INDEX IF NOT EXISTS idx_finding_regressions_finding ON finding_regressions(finding_id);
+
 -- 手动复测属于独立会话；结论与原漏洞处置状态分开保存。
 CREATE TABLE IF NOT EXISTS finding_retests (
     id BIGSERIAL PRIMARY KEY,

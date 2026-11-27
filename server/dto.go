@@ -316,6 +316,11 @@ type FindingDTO struct {
 	Name      string `json:"name,omitempty"` // 漏洞名称;为空时前端回退展示 vulnclass
 	Severity  string `json:"severity"`       // critical | high | medium | low
 	Status    string `json:"status"`
+	// v0.6.4 证据分级（Pojun L1–L4）：""=未分级；ReportExcluded=true 表示
+	// critical/high 且实测低于 L3，默认不进正式报告。
+	EvidenceLevel  string `json:"evidence_level,omitempty"`
+	Confidence     string `json:"confidence,omitempty"`
+	ReportExcluded bool   `json:"report_excluded"`
 	Summary   string `json:"summary"`
 	Evidence  string `json:"evidence"`
 	Packet    string `json:"packet,omitempty"` // 可复现 POC：完整原始 HTTP 请求包（Repeater 直粘重放）；空=非 HTTP 类
@@ -419,6 +424,9 @@ func findingDTOsForOwner(taskID, description string, in []*db.Node, meta map[int
 			d.FindingID = i64s(m.ID)
 			d.Status = m.Status
 			d.TrafficCount = m.TrafficCount
+			d.EvidenceLevel = m.EvidenceLevel
+			d.Confidence = m.Confidence
+			d.ReportExcluded = m.ReportExcluded
 			d.Assets = findingAssetDTOs(m.AssetIDs, assets)
 		}
 		out = append(out, d)
@@ -454,6 +462,9 @@ func findingFromDB(f *db.DBFinding, assets map[int64]*db.Asset) FindingDTO {
 		Name:      f.Name,
 		Severity:  f.Severity,
 		Status:    status,
+		EvidenceLevel:  f.EvidenceLevel,
+		Confidence:     f.Confidence,
+		ReportExcluded: f.ReportExcluded,
 		Summary:   f.Summary,
 		Evidence:  f.Evidence,
 		Packet:    f.Packet,

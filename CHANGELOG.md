@@ -4,6 +4,36 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-11-27
+
+### 证据分级（Pojun 移植，核心）
+
+- **四档分级**：L1 线索（版本号/报错/配置暴露）/ L2 行为异常（响应差异/状态码/反射/越权对照）/ L3 可利用（注入回显/命令执行输出/文件读取/登录成功）/ L4 业务影响（读非授权数据/取凭据/横向/资金订单影响）；critical/high 须 L3+ 才能进正式报告，否则默认排除并在报告文末单列「未达交付标准」，不静默丢弃。
+- **实测分级**：`db/finding_evidence_grade.go`（纯函数，可单测）：按证据文本 + 本次绑定流量角色（proof≥L3、verification≥L2）实测；生效等级 = min（自报，实测），自报高于实测以实测为准；纯源码行号推断封顶 L2；置信度随等级走（L1 低 / L2 中 / L3·L4 高）。
+- **接线**：`report_finding` 新增可选 `evidence_level` 参数（L1–L4）；`RecordFindingTx` 同一事务内分级入库（`findings.evidence_level/confidence/report_excluded`）；报告 docx 与 markdown 附录都按分级分区（正文只含可交付 finding，统计表同步分区，排除项附等级与未达标原因）。
+- **UI**：发现列表每行严重度下方挂证据徽标（L1 灰/L2 琥珀/L3 蓝/L4 绿），未达标行挂「未达交付标准」标记；列表新增证据等级筛选；详情页顶栏 + 状态区显示证据等级与置信度。
+
+### 质量闭环（Pojun 移植，核心）
+
+- **复核流程**：`POST /api/exploration/findings/{id}/review`，结论三态——确认（状态→已确认）/ 降级（严重度降一档 + 状态→已确认）/ 驳回（状态→误报）；状态变更与复核记录同一事务落库（`finding_reviews` 表，记复核人/备注与改前改后状态/严重度），驳回或降级留痕可查。
+- **去重留痕**：`finding_dedup_events` 表；v0.6.2 指纹拦下复报时也写一条去重事件（复报可查，不静默消失）。
+- **UI**：详情页「复核与质量闭环」卡片：结论下拉 + 备注 + 提交，复核记录列表、去重记录列表一并展示。
+
+### 确定性回归 spec（Pojun finding_regressions 轻量版）
+
+- 入库时若绑了 proof 流量即生成一条可重放断言的 spec（`finding_regressions` 表，断言优先级 token > diff > status，token 口径 `validate:<8–128 字符>:pass`）；**只记录 spec，不自动回放、不自动向目标发请求**（回放须人工触发，后续版再做）。详情页复核卡片内展示 spec（方法 + URL + 断言 + 期望状态码）。
+
+### 工程
+
+- **`artex doctor`**：新增 v0.6.4 检查（finding_reviews / finding_dedup_events / finding_regressions 三表 + findings.evidence_level/confidence/report_excluded 三列，缺失只警告，与 v0.6.3 同口径）。
+- **迁移**：`db/schema.sql` 全部 `IF NOT EXISTS`，随启动自动执行，旧行保持默认值（未分级），由后续复核/重登记补分级。
+
+### 遗留（后续项，未装进本版）
+
+- Pojun 15 协议库与小程序全链路未移植（体量大，本版只取了证据分级/质量闭环/回归 spec 三件）。
+- 回归 spec 的自动回放未做（只记 spec）；finding_regressions.last_verdict/last_checked_at 待回放实现后回填。
+- 旧 finding（v0.6.4 之前登记的）无分级，报告里按未分级处理，不自动回填。
+
 ## [0.6.3] - 2026-11-27
 
 ### 蜜罐识别 honeydetect（artex-ymh 移植）

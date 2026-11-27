@@ -10,6 +10,9 @@ import type {
   BatchCampaignSummary,
   CodeUpload,
   FindingDuplicateGroup,
+  FindingDedupEvent,
+  FindingRegression,
+  FindingReview,
   NetExitConfig,
   ActiveFindingRetest,
   Activity,
@@ -51,6 +54,7 @@ import type {
   FindingStatus,
   FindingsPage,
   FindingTraffic,
+  ReviewVerdict,
   FindingTrafficDetail,
   IntentAsset,
   InterceptApprovalFilter,
@@ -253,6 +257,7 @@ function findingFilterParams(q: Omit<FindingQuery, "page" | "pageSize">): URLSea
   if (q.query?.trim()) p.set("q", q.query.trim());
   if (q.sort) p.set("sort", q.sort);
   if (q.assetScope) p.set("asset_scope", q.assetScope);
+  if (q.evidenceLevel && q.evidenceLevel !== "all") p.set("evidence_level", q.evidenceLevel);
   return p;
 }
 
@@ -726,6 +731,17 @@ export const api = {
   findingLineage: (id: string) => get<{ nodes: TaskNode[]; edges: Edge[] }>(`/exploration/findings/${id}/lineage`),
   setFindingStatus: (id: string, status: FindingStatus) => patch<Finding>(`/exploration/findings/${id}`, { status }),
   setFindingSeverity: (id: string, severity: Severity) => patch<Finding>(`/exploration/findings/${id}`, { severity }),
+  // v0.6.4 质量闭环：复核（确认/降级/驳回）+ 复核记录/去重记录/回归 spec 查询。
+  reviewFinding: (id: string, verdict: ReviewVerdict, note?: string) =>
+    post<{ review: FindingReview; finding: Finding }>(`/exploration/findings/${id}/review`, { verdict, note }),
+  findingReviews: (id: string) =>
+    get<{ reviews: FindingReview[] }>(`/exploration/findings/${id}/reviews`).then((r) => arr(r.reviews)),
+  findingDedupEvents: (id: string) =>
+    get<{ dedup_events: FindingDedupEvent[] }>(`/exploration/findings/${id}/dedup-events`).then((r) =>
+      arr(r.dedup_events),
+    ),
+  findingRegression: (id: string) =>
+    get<{ regression: FindingRegression | null }>(`/exploration/findings/${id}/regression`).then((r) => r.regression),
   // 一次保存漏洞的名称/类别/严重等级(发现列表行内编辑用),只传出现的字段。
   updateFinding: (
     id: string,

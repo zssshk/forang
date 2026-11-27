@@ -33,16 +33,35 @@ func sortFindingsBySeverity(fs []*db.DBFinding) {
 	})
 }
 
+// partitionReportFindings splits findings into reportable vs excluded-from-report
+// (v0.6.4 evidence gate: critical/high below L3). Excluded ones are listed in
+// a separate section, never silently dropped.
+func partitionReportFindings(fs []*db.DBFinding) (in, ex []*db.DBFinding) {
+	for _, f := range fs {
+		if f.ReportExcluded {
+			ex = append(ex, f)
+		} else {
+			in = append(in, f)
+		}
+	}
+	return in, ex
+}
+
 func (s *Server) buildFindingsDocx(t *Task, fs []*db.DBFinding) (doc *Docx) {
 	doc = NewDocx()
 	doc.Heading(1, "渗透测试报告")
 	doc.Paragraph("目标系统: " + firstNonEmpty(cleanCoverName(t.Description), "目标系统"))
 	doc.Paragraph("生成时间: " + time.Now().Format("2006-01-02 15:04:05"))
-	doc.Paragraph(fmt.Sprintf("发现总数: %d", len(fs)))
+	// v0.6.4：低证据 finding 默认不进正文，文末单列。
+	reportable, excluded := partitionReportFindings(fs)
+	doc.Paragraph(fmt.Sprintf("发现总数: %d", len(reportable)))
+	if len(excluded) > 0 {
+		doc.Paragraph(fmt.Sprintf("另有 %d 条因证据等级不足未列入正文（见文末「未达交付标准」）", len(excluded)))
+	}
 
 	// 统计表
 	counts := map[string]int{}
-	for _, f := range fs {
+	for _, f := range reportable {
 		counts[f.Severity]++
 	}
 	rows := make([][]string, 0, 5)
@@ -53,7 +72,7 @@ func (s *Server) buildFindingsDocx(t *Task, fs []*db.DBFinding) (doc *Docx) {
 	doc.Heading(2, "风险统计（按评审后等级）")
 	doc.Table([]string{"等级", "数量"}, rows)
 
-	for i, f := range fs {
+	for i, f := range reportable {
 		doc.PageBreak()
 		title := f.Name
 		if title == "" {
@@ -80,8 +99,8 @@ func (s *Server) buildFindingsDocx(t *Task, fs []*db.DBFinding) (doc *Docx) {
 		statusLabel := map[string]string{"pending": "待处理", "in_progress": "处理中", "confirmed": "已确认",
 			"resolved": "已处理", "fixed": "已修复", "false_positive": "误报", "ignored": "忽略",
 			"duplicate": "重复", "risk_accepted": "风险接受"}[f.Status]
-		doc.Paragraph(fmt.Sprintf("等级: %s ｜ %s ｜ 状态: %s ｜ 发现者: %s ｜ 时间: %s",
-			strings.ToUpper(f.Severity), cvssTxt, statusLabel, f.Worker, f.CreatedAt.Format("2006-01-02 15:04")))
+		doc.Paragraph(fmt.Sprintf("等级: %s ｜ 证据: %s ｜ %s ｜ 状态: %s ｜ 发现者: %s ｜ 时间: %s",
+			strings.ToUpper(f.Severity), db.EvidenceLevelLabel(f.EvidenceLevel), cvssTxt, statusLabel, f.Worker, f.CreatedAt.Format("2006-01-02 15:04")))
 		if rev != "" {
 			doc.Paragraph("评审结论: " + rev)
 		}
@@ -135,6 +154,25 @@ func (s *Server) buildFindingsDocx(t *Task, fs []*db.DBFinding) (doc *Docx) {
 			}
 		}
 	}
+	// v0.6.4：低证据 finding 单列在文末，不进正文也不静默丢弃。
+	if len(excluded) > 0 {
+		doc.PageBreak()
+		doc.Heading(2, "未达交付标准（证据不足，仅列明不交付）")
+		doc.Paragraph("以下 finding 为 critical/high 但证据等级低于 L3（Pojun 证据分级口径），默认不进正式报告；补充证据或复核确认后可重新纳入。")
+		for i, f := range excluded {
+			title := f.Name
+			if title == "" {
+				title = f.VulnClass
+			}
+			doc.Heading(3, fmt.Sprintf("%d. %s [%s]", i+1, title, db.EvidenceLevelLabel(f.EvidenceLevel)))
+			doc.Paragraph(fmt.Sprintf("等级: %s ｜ 证据: %s ｜ %s",
+				strings.ToUpper(f.Severity), db.EvidenceLevelLabel(f.EvidenceLevel), db.EvidenceGateReason(f.Severity, f.EvidenceLevel)))
+			if f.Summary != "" {
+				doc.Heading(3, "描述")
+				writeSummaryDocx(doc, parseSummary(f.Summary))
+			}
+		}
+	}
 	return doc
 }
 
@@ -175,6 +213,8 @@ func (s *Server) findingsAppendixMarkdown(tID string) string {
 		return actionMD
 	}
 	sortFindingsBySeverity(own)
+	// v0.6.4：低证据 finding 默认不进正文，文末单列。
+	reportable, excluded := partitionReportFindings(own)
 
 	sevLabel := map[string]string{
 		"critical": "🔴 严重", "high": "🟠 高危", "medium": "🟡 中危",
@@ -193,7 +233,7 @@ func (s *Server) findingsAppendixMarkdown(tID string) string {
 
 	// 风险统计
 	counts := map[string]int{}
-	for _, f := range own {
+	for _, f := range reportable {
 		counts[f.Severity]++
 	}
 	sb.WriteString("## 风险统计\n\n")
@@ -201,11 +241,15 @@ func (s *Server) findingsAppendixMarkdown(tID string) string {
 	for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
 		fmt.Fprintf(&sb, "| %s | %d |\n", sevLabel[sev], counts[sev])
 	}
-	fmt.Fprintf(&sb, "| **合计** | **%d** |\n\n", len(own))
+	fmt.Fprintf(&sb, "| **合计** | **%d** |\n", len(reportable))
+	if len(excluded) > 0 {
+		fmt.Fprintf(&sb, "| 未达交付标准（证据不足） | %d |\n", len(excluded))
+	}
+	sb.WriteString("\n")
 
 	// 目录（锚点用 <a id>，不依赖渲染器的中文锚点规则）
 	sb.WriteString("## 目录\n\n")
-	for i, f := range own {
+	for i, f := range reportable {
 		title := f.Name
 		if title == "" {
 			title = f.VulnClass
@@ -214,7 +258,7 @@ func (s *Server) findingsAppendixMarkdown(tID string) string {
 	}
 	sb.WriteString("\n---\n\n")
 
-	for i, f := range own {
+	for i, f := range reportable {
 		title := f.Name
 		if title == "" {
 			title = f.VulnClass
@@ -241,9 +285,9 @@ func (s *Server) findingsAppendixMarkdown(tID string) string {
 		if worker == "" {
 			worker = "-"
 		}
-		sb.WriteString("| 等级 | 定级 | 状态 | 发现者 | 时间 |\n|---|---|---|---|---|\n")
-		fmt.Fprintf(&sb, "| %s | %s | %s | %s | %s |\n\n",
-			sevLabel[sev], cvssTxt, statusLabel[f.Status], worker, f.CreatedAt.Format("01-02 15:04"))
+		sb.WriteString("| 等级 | 证据 | 定级 | 状态 | 发现者 | 时间 |\n|---|---|---|---|---|---|\n")
+		fmt.Fprintf(&sb, "| %s | %s | %s | %s | %s | %s |\n\n",
+			sevLabel[sev], db.EvidenceLevelLabel(f.EvidenceLevel), cvssTxt, statusLabel[f.Status], worker, f.CreatedAt.Format("01-02 15:04"))
 		if review != "" {
 			fmt.Fprintf(&sb, "> %s\n\n", review)
 		}
@@ -272,8 +316,28 @@ func (s *Server) findingsAppendixMarkdown(tID string) string {
 				}
 			}
 		}
-		if i < len(own)-1 {
+		if i < len(reportable)-1 {
 			sb.WriteString("---\n\n")
+		}
+	}
+	// v0.6.4：低证据 finding 单列在文末，不进正文也不静默丢弃。
+	if len(excluded) > 0 {
+		sb.WriteString("---\n\n## 未达交付标准（证据不足，仅列明不交付）\n\n")
+		sb.WriteString("以下 finding 为 critical/high 但证据等级低于 L3（Pojun 证据分级口径），默认不进正式报告；补充证据或复核确认后可重新纳入。\n\n")
+		for i, f := range excluded {
+			title := f.Name
+			if title == "" {
+				title = f.VulnClass
+			}
+			fmt.Fprintf(&sb, "### %d. %s [%s]\n\n", i+1, title, db.EvidenceLevelLabel(f.EvidenceLevel))
+			fmt.Fprintf(&sb, "| 等级 | 证据 | 状态 | 发现者 | 时间 |\n|---|---|---|---|---|\n| %s | %s | %s | %s | %s |\n\n",
+				sevLabel[strings.ToLower(f.Severity)], db.EvidenceLevelLabel(f.EvidenceLevel), statusLabel[f.Status],
+				firstNonEmpty(f.Worker, "-"), f.CreatedAt.Format("01-02 15:04"))
+			fmt.Fprintf(&sb, "> %s\n\n", db.EvidenceGateReason(f.Severity, f.EvidenceLevel))
+			if f.Summary != "" {
+				sb.WriteString("**描述**\n\n")
+				fmt.Fprintf(&sb, "%s\n\n", reformatSummary(f.Summary))
+			}
 		}
 	}
 	sb.WriteString("\n")

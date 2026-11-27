@@ -34,6 +34,11 @@ type DBFinding struct {
 	AssetIDs []int64
 	Status          string
 	Report          string // 详细报告(Markdown);仅 GetFinding 填充,列表查询不带
+	// v0.6.4 证据分级（Pojun L1–L4）：EvidenceLevel ""=未分级；Confidence low/medium/high；
+	// ReportExcluded：critical/high 且实测低于 L3，默认不进正式报告。
+	EvidenceLevel  string
+	Confidence     string
+	ReportExcluded bool
 	CreatedAt       time.Time
 	TaskDescription string // populated via LEFT JOIN on tasks
 }
@@ -107,7 +112,8 @@ func (d *DB) AddFinding(taskID, nodeID int64, vulnclass, name, severity, summary
 const findingSelectCols = `f.id, f.task_id, f.node_id, f.vulnclass, COALESCE(f.name, ''), f.severity, f.summary,
 	       f.evidence, f.worker, f.asset_ids, COALESCE(f.status, 'pending'), f.created_at,
 	       COALESCE(t.description, '') AS task_description, f.evidence_version, f.report_evidence_version,
- (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=f.id), COALESCE(f.packet, '')`
+ (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=f.id), COALESCE(f.packet, ''),
+ COALESCE(f.evidence_level, ''), COALESCE(f.confidence, ''), COALESCE(f.report_excluded, FALSE)`
 
 // scanFindings materializes rows selected via findingSelectCols.
 func scanFindings(rows interface {
@@ -120,7 +126,7 @@ func scanFindings(rows interface {
 		f := &DBFinding{}
 		var aidsJSON string
 		if err := rows.Scan(&f.ID, &f.TaskID, &f.NodeID, &f.VulnClass, &f.Name, &f.Severity,
-			&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt, &f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount, &f.Packet); err != nil {
+			&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt, &f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount, &f.Packet, &f.EvidenceLevel, &f.Confidence, &f.ReportExcluded); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &f.AssetIDs)
@@ -158,6 +164,8 @@ type FindingFilter struct {
 	TaskID    string // 任务 id(字符串形式;空/非法 = 不按任务筛选)
 	Query     string // 名称/类型/摘要/证据/报告正文的模糊检索关键词
 	Sort      string // "severity" | "time"
+	// EvidenceLevel 是 v0.6.4 证据分级筛选：L1 | L2 | L3 | L4；空 = 不筛选。
+	EvidenceLevel string
 	// AssetScope 是资产树的节点 key(a:<id> / c:<id> / r:<domain> / __none__),
 	// 选中一个节点等于选中它的整棵子树。空 = 不按资产筛选。
 	AssetScope string
@@ -189,6 +197,7 @@ func (f FindingFilter) where() (string, []any) {
 	add("severity", f.Severity)
 	add("status", f.Status)
 	add("vulnclass", f.VulnClass)
+	add("evidence_level", f.EvidenceLevel)
 	// task_id 是 bigint 列,按整数比较(不能走上面的文本 add);空/非法值忽略。
 	if f.TaskID == FindingUnassignedTask {
 		conds = append(conds, "(f.task_id IS NULL OR t.id IS NULL)")
@@ -513,7 +522,7 @@ func (d *DB) ListFindingsForExport(f FindingFilter, ids []int64) ([]*DBFinding, 
 		var aidsJSON string
 		if err := rows.Scan(&f.ID, &f.TaskID, &f.NodeID, &f.VulnClass, &f.Name, &f.Severity,
 			&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt,
-			&f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount, &f.Packet, &f.Report); err != nil {
+			&f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount, &f.Packet, &f.EvidenceLevel, &f.Confidence, &f.ReportExcluded, &f.Report); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &f.AssetIDs)
@@ -740,6 +749,28 @@ func (d *DB) SetFindingSeverity(id int64, severity string) (int64, error) {
 	return d.setFindingCol(id, "severity", "severity", severity)
 }
 
+// SetFindingEvidenceGrade updates one finding's evidence grade (v0.6.4) and the
+// delivery gate flag in one write; node payload is synced so the per-task view
+// sees the same grade. level must already be validated by the caller.
+func (d *DB) SetFindingEvidenceGrade(id int64, level, confidence string, excluded bool) (int64, error) {
+	res, err := d.Exec(`UPDATE findings SET evidence_level=$1, confidence=$2, report_excluded=$3 WHERE id=$4`,
+		level, confidence, excluded, id)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return n, err
+	}
+	var nodeID *int64
+	if err := d.QueryRow(`SELECT node_id FROM findings WHERE id=$1`, id).Scan(&nodeID); err == nil && nodeID != nil {
+		_, _ = d.Exec(`UPDATE exploration_nodes
+			SET payload = jsonb_set(payload, '{evidence_level}', to_jsonb($1::text))
+			WHERE id = $2`, level, *nodeID)
+	}
+	return n, nil
+}
+
 // SetFindingName updates one finding's 漏洞名称 (+ node payload sync). Empty name is
 // allowed — the frontend falls back to the vuln class for display.
 func (d *DB) SetFindingName(id int64, name string) (int64, error) {
@@ -759,6 +790,10 @@ type FindingMeta struct {
 	ID       int64
 	Status   string
 	AssetIDs []int64
+	// v0.6.4 证据分级（Pojun L1–L4），与全局发现页同一口径。
+	EvidenceLevel  string
+	Confidence     string
+	ReportExcluded bool
 }
 
 // FindingMetaByNodeID maps a task's finding node ids to their standalone-row
@@ -776,7 +811,7 @@ func (d *DB) FindingMetaByNodeID(taskID int64) (map[int64]FindingMeta, error) {
 	if taskID <= 0 {
 		return out, nil
 	}
-	rows, err := d.Query(`SELECT node_id, id, COALESCE(status,'pending'), asset_ids, (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=findings.id) FROM findings
+	rows, err := d.Query(`SELECT node_id, id, COALESCE(status,'pending'), asset_ids, (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=findings.id), COALESCE(evidence_level,''), COALESCE(confidence,''), COALESCE(report_excluded,FALSE) FROM findings
 		WHERE task_id=$1 AND node_id IS NOT NULL`, taskID)
 	if err != nil {
 		return out, err
@@ -786,7 +821,7 @@ func (d *DB) FindingMetaByNodeID(taskID int64) (map[int64]FindingMeta, error) {
 		var nid int64
 		var m FindingMeta
 		var aidsJSON string
-		if err := rows.Scan(&nid, &m.ID, &m.Status, &aidsJSON, &m.TrafficCount); err != nil {
+		if err := rows.Scan(&nid, &m.ID, &m.Status, &aidsJSON, &m.TrafficCount, &m.EvidenceLevel, &m.Confidence, &m.ReportExcluded); err != nil {
 			return out, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &m.AssetIDs)
