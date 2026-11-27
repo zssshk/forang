@@ -9,8 +9,12 @@ import { mockHandle } from "@/lib/mock/handler";
 import type {
   BatchCampaignSummary,
   CodeUpload,
+  DetectionCoverage,
+  DetectionRule,
+  DetectionTriageItem,
   FindingDuplicateGroup,
   FindingDedupEvent,
+  FindingDetection,
   FindingRegression,
   FindingReview,
   NetExitConfig,
@@ -758,6 +762,25 @@ export const api = {
     ),
   findingRegression: (id: string) =>
     get<{ regression: FindingRegression | null }>(`/exploration/findings/${id}/regression`).then((r) => r.regression),
+  // v0.6.6 检测规则包：规则清单/开关、finding 命中、重扫、待复核队列、覆盖率自检。
+  detectionRules: () =>
+    get<{ rules: DetectionRule[]; seeded: boolean }>(`/detections/rules`).then((r) => arr(r.rules)),
+  setDetectionRule: (ruleId: string, enabled: boolean) =>
+    patch<{ rule_id: string; enabled: boolean }>(`/detections/rules/${encodeURIComponent(ruleId)}`, { enabled }),
+  findingDetections: (id: string) =>
+    get<{ detections: FindingDetection[] }>(`/exploration/findings/${id}/detections`).then((r) =>
+      arr(r.detections),
+    ),
+  rescanFindingDetections: (id: string) =>
+    post<{ hit_count: number }>(`/exploration/findings/${id}/detections/rescan`, {}),
+  detectionTriage: (taskId?: number) =>
+    get<{ queue: DetectionTriageItem[] }>(`/detections/triage${taskId ? `?task_id=${taskId}` : ""}`).then((r) =>
+      arr(r.queue),
+    ),
+  detectionCoverage: (taskId?: number) =>
+    get<{ coverage: DetectionCoverage }>(
+      `/detections/coverage${taskId ? `?task_id=${taskId}` : ""}`,
+    ).then((r) => r.coverage),
   // 一次保存漏洞的名称/类别/严重等级(发现列表行内编辑用),只传出现的字段。
   updateFinding: (
     id: string,

@@ -2158,6 +2158,9 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		// 蜜罐识别（v0.6.3 ymh 移植）：honeypot_check 只读评估；suggest_credentials
 		// 凭据复用打分（只返元数据）；tunnel_plan 生成隧道计划并入账。
 		t.honeypotCheck(), t.suggestCredentials(), t.tunnelPlan(),
+		// 检测规则包（v0.6.6 detections 移植）：detection_check 只读匹配；
+		// detection_triage 取待复核队列（接 v0.6.4 复核流程）。
+		t.detectionCheck(), t.detectionTriage(),
 		// 立足点会话（v0.6.5)：register_session 登记；reverse_listen 接管；tunnel_deploy 投递。
 		t.registerSession(), t.reverseListen(), t.tunnelDeploy(),
 	}

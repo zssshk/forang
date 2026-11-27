@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	pgdb "github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/detections"
 	"github.com/Autumn-27/artex/enrich"
 	"github.com/Autumn-27/artex/guard"
 	"github.com/Autumn-27/artex/intercept"
@@ -382,6 +384,13 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	}
 	if err := pg.EnsureLLMUsageTable(); err != nil {
 		log.Printf("[llmusage] create table: %v", err)
+	}
+	// v0.6.6 检测规则包：规则开关种子（已存在的不动；失败只记日志，
+	// 匹配缺行时默认全启用，见 db.EnabledRuleMap）。
+	if pack, err := detections.Default(); err != nil {
+		log.Printf("[detections] rule pack load failed: %v", err)
+	} else if err := pg.EnsureDetectionRules(context.Background(), pack); err != nil {
+		log.Printf("[detections] seed rules: %v", err)
 	}
 	m := &Manager{dir: dir, pg: pg, assets: pg.Assets(), tasks: map[string]*Task{}, interceptor: intercept.New(pg)}
 	if proxyAddr != "" {
@@ -873,7 +882,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		CompanyIDs:     append([]int64(nil), pt.CompanyIDs...),
 		TimeoutSeconds: pt.TimeoutSeconds, PlanHeartbeatSeconds: pt.PlanHeartbeatSeconds,
 		CoverageEnabled: pt.CoverageEnabled, Preset: pt.Preset,
-		FirstRunAt:      unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
+		FirstRunAt: unixOrZero(pt.FirstRunAt), DeadlineAt: unixOrZero(pt.DeadlineAt),
 		Store: store, Guard: guard.NewWithInterceptor(ic), notify: make(chan struct{}, 1),
 	}
 }

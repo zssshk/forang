@@ -675,6 +675,9 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.nodeDetail(),
 		// knowledge_lookup：报漏洞/事实时引用稳定的 ATT&CK/WSTG/CWE 编号，或执行意图时查一条测试方法。只读。
 		t.knowledgeLookup(),
+		// 检测规则包（v0.6.6 detections 移植）：detection_check 只读匹配
+		//（finding 重扫或任意文本；关联规则须另给 events）。
+		t.detectionCheck(),
 		// 三端载体（小程序/APP/Web 统一后端 API 资产）：只读，上传解析在控制台完成。
 		t.carrierParse(),
 		t.annotateTool(),

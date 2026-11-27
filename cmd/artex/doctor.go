@@ -12,7 +12,9 @@
 //     finding_regressions 表与 findings.evidence_level 等列（同上，只警告）；
 //  6. v0.6.5 立足点会话表结构：sessions / session_recon_reports /
 //     tunnel_deploy_attempts 表与 tunnels.via_session_id 列（同上，只警告）；
-//  5. 外部工具钉版清单（packaging/tools-manifest.json）：存在且哈希匹配为 OK，
+//  7. v0.6.6 检测规则包：detection_rules / finding_detections 表（同上，
+//     只警告）+ 内嵌规则包加载数（9 Sigma / 5 原子 / 4 关联，缺失才 FAIL）；
+//  8. 外部工具钉版清单（packaging/tools-manifest.json）：存在且哈希匹配为 OK，
 //     未钉版/找不到只警告，哈希不匹配才 FAIL。
 //
 // 任一 FAIL → exit 1；只有 WARN → exit 0。
@@ -30,6 +32,7 @@ import (
 
 	"github.com/Autumn-27/artex/config"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/detections"
 	"github.com/Autumn-27/artex/toolscheck"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver ("pgx")
 )
@@ -109,6 +112,9 @@ func runDoctor(args []string) int {
 					{"session_recon_reports 表", "SELECT 1 FROM information_schema.tables WHERE table_name='session_recon_reports'"},
 					{"tunnel_deploy_attempts 表", "SELECT 1 FROM information_schema.tables WHERE table_name='tunnel_deploy_attempts'"},
 					{"tunnels.via_session_id 列", "SELECT 1 FROM information_schema.columns WHERE table_name='tunnels' AND column_name='via_session_id'"},
+					// v0.6.6 检测规则包表结构。
+					{"detection_rules 表", "SELECT 1 FROM information_schema.tables WHERE table_name='detection_rules'"},
+					{"finding_detections 表", "SELECT 1 FROM information_schema.tables WHERE table_name='finding_detections'"},
 				} {
 					var one int
 					if err := sqldb.QueryRowContext(ctx, q.sql).Scan(&one); err != nil {
@@ -119,6 +125,16 @@ func runDoctor(args []string) int {
 				}
 			}
 		}
+	}
+
+	// v0.6.6 检测规则包：内嵌包必须可加载且数量对得上（9 Sigma / 5 原子 /
+	// 4 关联）；加载失败或数量不对是构建错误，直接 FAIL。
+	if pack, err := detections.Default(); err != nil {
+		rep.fail("检测规则包", "加载失败: "+err.Error())
+	} else if len(pack.Rules) != 9 || len(pack.AtomicRules()) != 5 || len(pack.CorrelationRules()) != 4 {
+		rep.fail("检测规则包", fmt.Sprintf("规则数不对：共 %d 条（原子 %d、关联 %d），期望 9/5/4", len(pack.Rules), len(pack.AtomicRules()), len(pack.CorrelationRules())))
+	} else {
+		rep.ok("检测规则包", fmt.Sprintf("9 条 Sigma（原子 5、关联 4），版本 %s", pack.Version))
 	}
 
 	// 2. 数据目录可写

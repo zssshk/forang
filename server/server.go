@@ -22,6 +22,7 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/detections"
 	"github.com/Autumn-27/artex/guard"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/artex/llmpool"
@@ -1058,6 +1059,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/exploration/findings/{id}/reviews", s.listFindingReviews)
 	mux.HandleFunc("GET /api/exploration/findings/{id}/dedup-events", s.listFindingDedupEvents)
 	mux.HandleFunc("GET /api/exploration/findings/{id}/regression", s.getFindingRegression)
+	// v0.6.6 检测规则包（artex-global detections/ 移植）。
+	mux.HandleFunc("GET /api/detections/rules", s.listDetectionRules)
+	mux.HandleFunc("PATCH /api/detections/rules/{rule}", s.setDetectionRule)
+	mux.HandleFunc("GET /api/exploration/findings/{id}/detections", s.getFindingDetections)
+	mux.HandleFunc("POST /api/exploration/findings/{id}/detections/rescan", s.rescanFindingDetections)
+	mux.HandleFunc("GET /api/detections/ioc.csv", s.exportDetectionIoCs)
+	mux.HandleFunc("GET /api/detections/triage", s.detectionTriage)
+	mux.HandleFunc("GET /api/detections/coverage", s.detectionCoverage)
+	mux.HandleFunc("GET /api/detections/indicators.csv", s.downloadDetectionArtifact("forang-indicators.csv", "text/csv; charset=utf-8", detections.IndicatorsCSV()))
+	mux.HandleFunc("GET /api/detections/navigator_layer.json", s.downloadDetectionArtifact("forang-navigator-layer.json", "application/json", detections.NavigatorLayer()))
+	mux.HandleFunc("GET /api/detections/suricata.rules", s.downloadDetectionArtifact("forang-suricata.rules", "text/plain; charset=utf-8", detections.SuricataRules()))
 	mux.HandleFunc("GET /api/exploration/intents", s.intents)
 	mux.HandleFunc("GET /api/exploration/graph", s.explorationGraph)
 	mux.HandleFunc("GET /api/exploration/nodes", s.explorationNodes)

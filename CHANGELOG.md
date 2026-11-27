@@ -4,6 +4,38 @@
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-11-27
+
+### 检测规则包（artex-global detections/ 移植，核心）
+
+- **规则包**：`detections/`（仿 honeydetect 内嵌 + `go:embed`）：Sigma 9 条——原子 5 条（富化探针 UA `artex-enrich/1.0`、自更新出站 UA、平台管控审计标记、破坏性命令、录制代理 CA 文件）+ 关联 4 条（富化速率 ≥30 次/5 分钟、富化扇出 ≥20 host/10 分钟、管控封锁突发 ≥5 次/10 分钟、标记+破坏性命令同窗 30 分钟）；ATT&CK 覆盖 8 技术（T1595/T1592/T1105/T1059/T1485/T1561.002/T1489/T1557），编号与 v0.6.2 knowledge-pack（ATT&CK 706）同源，测试断言每条技术都能在 knowledge-pack 里查到。**一处适配**：上游自更新 UA 是 `artex-selfupdate`，FORANG 已改名 `forang-selfupdate`（selfupdate/github.go:98），规则钉 FORANG 的实际值；其余锚定字符串均在 FORANG 源码实查一致。
+- **诚实口径**：这包检测的是 FORANG 自身的运行指纹，不是通用漏洞类别；命中只说明某 finding 的已记录证据里出现了本工具自身发出的信号，缺席不等于安全；破坏性命令规则是通用狩猎线索（与 db/db.go 内置拒单同源），合法管理操作会误报；CA 规则须 `_ca` 与文件名同时出现，裸文件名不命中；`TRUNCATE` 只按大写匹配（避开小写 truncate 命令）。
+- **finding 映射**：每条规则带 `finding_classes` 启发式关键词映射（类别名子串匹配，非语义分类）；登记时同一事务内跑原子规则（证据/流量/包范围），命中写 `finding_detections`，保存点隔离、匹配失败不影响漏洞写入；`detection_rules` 表存开关（缺行 = 启用），启动时 `NewManager` 种子。
+- **关联评估**：需要真实事件时间线，不在登记时算；`EvaluateCorrelations` 纯函数（event_count/value_count/temporal 三型滑窗）+ 任务重扫从已绑定流量快照拼事件（host 取 URL 主机、时间取捕获时间）；无绑定流量的任务返回空事件，不凭空算。
+
+### 检测落地（finding 匹配 / IoC / triage）
+
+- **工具**：只读 `detection_check`（planner + worker：finding 重扫写命中，或对任意文本跑原子规则；带 events 时再跑关联规则）+ `detection_triage`（planner：取当前任务待复核队列）。
+- **接口**：`GET /api/detections/rules`、`PATCH /api/detections/rules/{rule}`（启用/禁用）、`GET /api/exploration/findings/{id}/detections`、`POST …/detections/rescan`、`GET /api/detections/ioc.csv`（finding、规则、ATT&CK、资产、证据等级）、`GET /api/detections/triage`、`GET /api/detections/coverage`、`GET /api/detections/indicators.csv|navigator_layer.json|suricata.rules`（内嵌制品下载）。
+- **triage 排序**：待复核队列按严重度 → 证据等级（L4 优先）→ 规则命中数（多者优先）→ 登记时间，接 v0.6.4 复核流程。
+- **覆盖率自检**：技术维（8 技术各有几条启用规则）+ 类别维（库里各漏洞类别有无规则覆盖），无覆盖的类别与技术单独列出（能力边界，不是缺陷）。
+- **防守制品**：IoC 清单 7 行（CSV + MISP 事件）+ Suricata 3 条（富化 UA 现网与速率、norma UA）+ ATT&CK 覆盖层（8 技术，100/65/50 分制沿用上游）+ host triage 脚本 `detections/triage/forang_host_triage.py`（上游脚本改名 + selfupdate 值适配，只读，`--self-test` 22 项全过）。
+
+### UI
+
+- finding 详情页新增「检测命中」卡片（规则 slug + 命中摘录 + 重新扫描按钮；空状态写明「缺席不等于安全」）；新增 `/function/detections` 规则页（规则清单 + 开关、覆盖率自检、待复核队列、IoC/指标/ATT&CK 层/Suricata 下载）+ 侧栏「检测规则」入口。
+
+### 工程
+
+- **`artex doctor`**：新增 v0.6.6 检查（detection_rules / finding_detections 两表，缺失只警告）+ 规则包加载数（9 Sigma / 5 原子 / 4 关联，数量不对直接 FAIL）。
+- **测试**：detections 单测（包计数、ATT&CK 落 knowledge-pack、原子正/反样本、CA 双 token、TRUNCATE 大小写、关联三型阈值与窗、triage 排序、覆盖率）本地全过；db PG 测试（种子/开关/登记命中/重扫/队列/IoC，缺 DSN 跳过，部署机跑）；前端 tsc 通过。
+- **教训**：写文件工具会把平台管控标记字面量 `【ARTEX …】` 悄悄清空（rules.json 与测试文件各中一次，均由单测抓出），今后含该标记的写操作一律走 exec/python 从已知正确来源（如上游 CSV）取值，写完 grep 复核；`Load()` 已加空 token 校验，空 token 即加载失败。
+
+### 遗留（后续项，未装进本版）
+
+- 关联规则在任务重扫里只能用到已绑定流量的快照：未绑定流量的 finding 不产生事件，速率/扇出类规则在 FORANG 内基本不触发——它们的主场是防守方的 SIEM/日志管线，FORANG 只负责把 Sigma 原样带出去。
+- 命令范围的重扫：命令无独立存储，重扫只覆盖证据/流量/包范围；登记时证据正文已含命令引用，不另传。
+
 ## [0.6.5] - 2026-11-27
 
 ### 立足点会话子系统（artex-ymh 移植，核心，前置）

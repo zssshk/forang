@@ -26,7 +26,7 @@ import { statusMeta } from "@/lib/status";
 import type { Finding, FindingStatus, Severity } from "@/lib/types";
 
 import { FindingLineageView } from "./lineage";
-import { EvidenceBadges, FindingReviewPanel } from "./review";
+import { EvidenceBadges, FindingDetectionsPanel, FindingReviewPanel } from "./review";
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
 const FINDING_STATUSES: FindingStatus[] = [
@@ -176,6 +176,7 @@ function FindingDetailInner() {
               </Card>
               <FindingRetestPanel key={id} findingId={id} readOnly={finding.inherited} onCompleted={load} />
               <FindingReviewPanel findingId={id} readOnly={finding.inherited} onReviewed={load} />
+              <FindingDetectionsPanel findingId={id} />
               {finding.packet ? (
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0">

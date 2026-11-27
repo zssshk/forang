@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Autumn-27/artex/detections"
 	"github.com/Autumn-27/artex/notify"
 )
 
@@ -431,6 +432,23 @@ VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, in.T
 	// 即生成一条可重放断言的 spec；无 proof 流量时不生成假 spec。只记录，不回放。
 	if err := UpsertFindingRegressionTx(tx, out.FindingID, in, prepared); err != nil {
 		return nil, err
+	}
+	// v0.6.6 检测规则匹配（artex-global detections/ 移植）：同一事务内对新
+	// finding 的证据跑原子规则，命中写 finding_detections。保存点隔离：
+	// 匹配落库失败只记日志，绝不影响漏洞写入（与通知事件同口径）。
+	// 命令范围无独立存储，证据正文已含命令引用，不另传。
+	if pack, perr := detections.Default(); perr == nil {
+		ev := detections.FindingEvidence{
+			VulnClass: in.VulnClass, Name: in.Name, Summary: in.Summary,
+			Evidence: in.Evidence, Packet: in.Packet,
+		}
+		for _, pr := range prepared {
+			ev.Traffic = append(ev.Traffic, pr.Snapshot.ReqHead, pr.Snapshot.RespHead)
+		}
+		enabled, _ := EnabledRuleMapTx(ctx, tx, pack)
+		if hits := pack.MatchFinding(ev, enabled); len(hits) > 0 {
+			RecordFindingDetectionsTx(ctx, tx, out.FindingID, hits)
+		}
 	}
 	var err error
 	out.Traffic, err = FindingTrafficTx(tx, out.FindingID)

@@ -15,6 +15,7 @@ import { api } from "@/lib/api";
 import { statusMeta } from "@/lib/status";
 import type {
   FindingDedupEvent,
+  FindingDetection,
   FindingRegression,
   FindingReview,
   ReviewVerdict,
@@ -202,5 +203,84 @@ export function EvidenceBadges({ finding }: { finding: { evidence_level?: string
         </Badge>
       ) : null}
     </>
+  );
+}
+
+// FindingDetectionsPanel 是 v0.6.6 检测规则包的 UI：展示一条 finding 的
+// 规则命中（规则 slug + 命中摘录），并提供重扫按钮。命中只说明该 finding
+// 的已记录证据里出现了 FORANG 自身的运行指纹，不是漏洞本身更严重；
+// 缺席不等于安全——空状态直接写明这一点，不留歧义。
+export function FindingDetectionsPanel({ findingId }: { findingId: string }) {
+  const [items, setItems] = React.useState<FindingDetection[]>([]);
+  const [loaded, setLoaded] = React.useState(false);
+  const [rescanning, setRescanning] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    api
+      .findingDetections(findingId)
+      .catch(() => [] as FindingDetection[])
+      .then(setItems)
+      .finally(() => setLoaded(true));
+  }, [findingId]);
+
+  React.useEffect(() => {
+    load();
+  }, [load]);
+
+  const rescan = React.useCallback(async () => {
+    if (rescanning) return;
+    setRescanning(true);
+    try {
+      const { hit_count } = await api.rescanFindingDetections(findingId);
+      toast.success(`重扫完成，命中 ${hit_count} 条规则`);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "重扫失败");
+    } finally {
+      setRescanning(false);
+    }
+  }, [findingId, load, rescanning]);
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <div>
+          <CardTitle className="text-sm">检测命中</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            检测规则包（Sigma 9 条）对本 finding 已记录证据的匹配结果；命中只说明证据里出现了 FORANG
+            自身的运行指纹。
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={rescan} disabled={rescanning}>
+          {rescanning ? "重扫中…" : "重新扫描"}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {!loaded ? (
+          <p className="text-sm text-muted-foreground">加载中…</p>
+        ) : items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            未命中任何检测规则。规则检测的是 FORANG 自身的运行指纹，缺席不等于安全。
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {items.map((d) => (
+              <li key={d.id} className="rounded-md border p-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">{d.slug}</Badge>
+                  <span className="font-mono text-xs text-muted-foreground">{d.rule_id}</span>
+                  <span className="text-xs text-muted-foreground">{fmtTime(d.matched_at)}</span>
+                </div>
+                {d.excerpt ? (
+                  <p className="mt-1.5 font-mono text-xs break-all whitespace-pre-wrap text-muted-foreground">
+                    {d.excerpt}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }

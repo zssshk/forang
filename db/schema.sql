@@ -1922,3 +1922,28 @@ CREATE TABLE IF NOT EXISTS tunnel_deploy_attempts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_tunnel_deploy_attempts_tunnel ON tunnel_deploy_attempts(tunnel_id);
+
+-- v0.6.6 检测规则包（artex-global detections/ 移植）：
+-- detection_rules：规则开关（以 Sigma UUID 为主键；缺行 = 启用，见
+-- db/detections.go 的 EnabledRuleMap）；finding_detections：finding 与
+-- 规则的命中记录（登记时原子匹配 + 事后批量重扫共用，UNIQUE 防重复记）。
+CREATE TABLE IF NOT EXISTS detection_rules (
+    rule_id    TEXT PRIMARY KEY,
+    slug       TEXT NOT NULL DEFAULT '',
+    title      TEXT NOT NULL DEFAULT '',
+    level      TEXT NOT NULL DEFAULT 'medium',
+    kind       TEXT NOT NULL DEFAULT 'atomic',
+    enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS finding_detections (
+    id         BIGSERIAL PRIMARY KEY,
+    finding_id BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    rule_id    TEXT NOT NULL,
+    slug       TEXT NOT NULL DEFAULT '',
+    excerpt    TEXT NOT NULL DEFAULT '',
+    matched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (finding_id, rule_id)
+);
+CREATE INDEX IF NOT EXISTS idx_finding_detections_finding ON finding_detections(finding_id);
+CREATE INDEX IF NOT EXISTS idx_finding_detections_rule ON finding_detections(rule_id);

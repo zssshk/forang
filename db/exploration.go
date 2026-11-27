@@ -174,6 +174,15 @@ type ExplorationStore struct {
 	expID int64
 }
 
+// DB returns the underlying database handle (for tools that need tables
+// outside the exploration graph, e.g. detection rules). Nil-safe.
+func (s *ExplorationStore) DB() *DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
 // CreateExploration creates a new exploration root and returns its id.
 func (d *DB) CreateExploration(description, goal string) (int64, error) {
 	var id int64

@@ -1,0 +1,17 @@
+# FORANG network detection - Suricata rules
+# Ported from jiwoochris/artex-global detections/suricata/artex.rules (AGPL-3.0).
+# FORANG shares the two wire-observable User-Agents below (enrich prober
+# artex-enrich/1.0 in enrich/enrich.go, norma SDK WebFetch norma/0.4); the
+# self-update UA travels over HTTPS and is intentionally not a network rule.
+# SCOPE AND HONESTY - read before deploying:
+#  - The enrich User-Agent is only visible where traffic is plaintext HTTP or
+#    inspected at a TLS-terminating proxy / WAF. End-to-end TLS encrypts it.
+#  - A static User-Agent can be changed by the operator; its absence does NOT
+#    imply safety.
+#  - Validate with: suricata -T -c /etc/suricata/suricata.yaml -S suricata.rules
+#
+alert http any any -> any any (msg:"ARTEX enrichment prober User-Agent (artex-enrich)"; flow:established,to_server; http.method; content:"GET"; http.user_agent; content:"artex-enrich/"; startswith; fast_pattern; classtype:attempted-recon; reference:url,github.com/jiwoochris/artex-global/tree/main/detections/suricata; metadata:created_at 2026_10_05; sid:1000001; rev:1;)
+
+alert http any any -> any any (msg:"ARTEX enrichment prober high-rate enumeration (artex-enrich)"; flow:established,to_server; http.user_agent; content:"artex-enrich/"; startswith; fast_pattern; detection_filter:track by_src, count 30, seconds 300; classtype:attempted-recon; reference:url,github.com/jiwoochris/artex-global/tree/main/detections/suricata; metadata:created_at 2026_10_05; sid:1000002; rev:1;)
+
+alert http any any -> any any (msg:"ARTEX worker WebFetch User-Agent (norma)"; flow:established,to_server; http.user_agent; content:"norma/"; startswith; fast_pattern; classtype:attempted-recon; reference:url,github.com/jiwoochris/artex-global/tree/main/detections/suricata; metadata:created_at 2026_10_07; sid:1000003; rev:1;)

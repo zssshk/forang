@@ -161,8 +161,9 @@ go build -tags embedui -o forang ./cmd/artex
 
 ## 版本
 
-当前 **v0.6.5**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+当前 **v0.6.6**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
 
+- **检测规则包（artex-global detections/ 移植）**：`detections/` 内嵌 Sigma 9 条（原子 5：富化探针 UA、自更新出站 UA、平台管控审计标记、破坏性命令、录制代理 CA；关联 4：富化速率/扇出、管控封锁突发、标记+破坏性命令），ATT&CK 覆盖 8 技术（编号与 v0.6.2 knowledge-pack 同源）；登记时同一事务内跑原子规则，命中写 `finding_detections`（保存点隔离）；只读工具 `detection_check`/`detection_triage`；接口含规则开关、finding 命中/重扫、IoC 导出 CSV、待复核队列（严重度 → 证据等级 → 命中数）、覆盖率自检；防守制品含 IoC 清单（CSV + MISP）、Suricata 3 条、ATT&CK 覆盖层、host triage 脚本；finding 详情页「检测命中」卡片 + `/function/detections` 规则页；`artex doctor` 补 v0.6.6 检查。诚实口径：检测的是 FORANG 自身运行指纹，缺席不等于安全
 - **立足点会话子系统（artex-ymh 移植）**：`sessions` 表 + `db/sessions.go`（AES-GCM 加密落库，密钥由 jwt.key 经 SHA-256 域分离派生，域标签 `artex/sessions/v1`；密钥缺失直接报错，绝不明文落库）+ 进程内 `session.Registry`；kind 五态 http_php/http_jsp/http_aspx/reverse/ssh，status 只记 alive/dead，失联由 `last_beat` 现算（10 分钟）；会话挂凭据/主机资产/隧道/拓扑；工具 `register_session`（登记后立即 Test，不通记 dead）/`session_exec`/`session_read`/`session_write`（每次使用刷新心跳）；HTTP 层 `GET/POST /api/tasks/{id}/sessions` + 心跳/exec/read/write/删除（列表详情一律剥离 secret）
 - **webshell 加密会话（PHP/JSP）**：`session/httpshell.go`（encoder 只接受 aes/xor，raw 明文须显式 `allow_plaintext=true` 才放行；单行命令随机哨兵取回，多行经 base64 临时文件执行；写文件 ≤200KB 单次、超大分块追加）；内网页新增「立足点会话」Tab（登记 + 心跳/删除）
 - **penelope 反弹 shell**：受管 handler（`penelope.py --mcp`，本地 token 认证）+ MCP 桥（6 工具）；`reverse_listen` 启动/复用 handler 并把已连反弹会话同步登记为 reverse 类会话（去重）；Close 永不 kill 远端 shell；未配置时如实报错
@@ -209,6 +210,7 @@ go build -tags embedui -o forang ./cmd/artex
 
 <!-- ver-note -->
 > v0.6.4：证据分级（Pojun L1–L4，实测分级 + critical/high 须 L3+ 才进正式报告，低证据文末单列）· 质量闭环（复核确认/降级/驳回留痕 + 指纹去重事件）· 确定性回归 spec（只记不自动回放）· `artex doctor` 补 v0.6.4 表/列检查。
+> v0.6.6：检测规则包（artex-global detections/ 移植：Sigma 9 条 + ATT&CK 8 技术 + IoC 清单/MISP + Suricata 3 条 + host triage 脚本；登记时原子匹配、重扫、IoC 导出、triage 队列、覆盖率自检；finding 详情页检测命中卡片 + 检测规则页）· `artex doctor` 补 v0.6.6 检查。
 > v0.6.5：立足点会话子系统（登记/心跳/失联/关联凭据隧道拓扑，AES-GCM 加密落库）· webshell 加密会话（aes/xor，明文须显式放行）· penelope 反弹 shell 接管同步 · session_recon 被动侦察（只读命令包 + 资产/事实/pending_scope）· 隧道远端投递 deploy（chisel/suo5 四层 + 决定性验证 + 尝试留痕可重试）· `artex doctor` 补 v0.6.5 表/列检查。
 > v0.6.3：蜜罐识别 honeydetect（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 静态签名 + 资产评分/UI 徽标 + planner 处置纪律 + worker 反 AI 陷阱红线）· 内网作战（凭据库 AES-GCM + 复用打分、suo5/chisel 隧道选型与计划台账、内网拓扑图、待授权网段审批、外网→内网移交、内网页）· 外部工具钉版清单 + `artex doctor` 预检。
 > v0.6.2：知识包 knowledge-pack（ATT&CK 706 / WSTG 133 / CWE 956 内嵌 + 只读 knowledge_lookup 工具）· finding 指纹去重（report_finding 前确定性去重 + force_register 逃生口）· 修旁路摘要硬编码 Thinking:"disabled"（不再发 thinking 字段，New API 与 Anthropic 双兼容）。

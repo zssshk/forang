@@ -1870,3 +1870,50 @@ export interface CodeUpload {
   task_id?: number | null;
   task_status?: string;
 }
+
+// v0.6.6 检测规则包（artex-global detections/ 移植）：一条 finding↔规则命中记录。
+export interface FindingDetection {
+  id: number;
+  finding_id: number;
+  rule_id: string;
+  slug: string;
+  excerpt: string;
+  matched_at: string;
+}
+
+// v0.6.6：一条规则的开关行。
+export interface DetectionRule {
+  rule_id: string;
+  slug: string;
+  title: string;
+  level: string;
+  kind: string;
+  enabled: boolean;
+}
+
+// v0.6.6：待复核队列里的一条 finding（已按严重度/证据等级/命中数排序）。
+export interface DetectionTriageItem {
+  finding_id: number;
+  vulnclass: string;
+  name: string;
+  severity: string;
+  evidence_level: string;
+  status: string;
+  hit_count: number;
+  rule_slugs: string[];
+  created_at: string;
+}
+
+// v0.6.6：覆盖率自检结果（技术维 + 类别维）。
+export interface DetectionCoverage {
+  techniques: {
+    technique: string;
+    tactic: string;
+    enabled_rules: number;
+    total_rules: number;
+    rule_slugs: string[];
+  }[];
+  classes: { class: string; covered: boolean; rule_slugs: string[] }[];
+  uncovered_classes: string[];
+  uncovered_techniques: string[];
+}
