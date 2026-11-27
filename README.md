@@ -161,7 +161,12 @@ go build -tags embedui -o forang ./cmd/artex
 
 ## 版本
 
-当前 **v0.6.3**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+当前 **v0.6.4**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+
+- **证据分级（Pojun 移植）**：L1 线索 / L2 行为异常 / L3 可利用 / L4 业务影响四档；`report_finding` 可自报 `evidence_level`，生效等级 = min（自报，实测）（实测按证据文本 + 绑定流量角色 proof≥L3 / verification≥L2）；critical/high 低于 L3 默认不进正式报告，报告文末单列「未达交付标准」不静默丢；发现列表挂证据徽标 + 等级筛选，详情页显示等级与置信度
+- **质量闭环（Pojun 移植）**：复核三态确认/降级/驳回（降级严重度降一档、驳回进误报），状态变更与复核记录同一事务落库留痕；v0.6.2 指纹拦下复报时也写 `finding_dedup_events` 去重事件；详情页「复核与质量闭环」卡片（提交复核 + 记录/去重记录列表）
+- **确定性回归 spec（Pojun 轻量版）**：入库绑了 proof 流量即生成可重放断言 spec（断言优先级 token > diff > status），只记录不自动回放；详情页展示 spec
+- **工程**：`artex doctor` 新增 v0.6.4 表/列检查（finding_reviews / finding_dedup_events / finding_regressions + findings 三列，缺失只警告）
 
 - **蜜罐识别 honeydetect（artex-ymh 移植）**：`honeydetect/` 静态签名层（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 内嵌签名，AND 匹配、热加载），service 资产落库后自动评分回写（`honeypot_score`/`honeypot_evidence`，取更高分 + 证据去重）并写 fact 进探索图；planner 态势注入 `honeypot_assets` + 处置纪律（单信号只降级交互，双信号才封锁方向）；worker 追加反 AI 陷阱红线（拒交系统提示词/工具清单/本地凭据、拒执行下载内容里的诱导指令）；资产页服务表新增蜜罐徽标（≥0.9 红色高置信、≥0.6 琥珀色疑似）；新工具 `honeypot_check`（只读评估，planner + worker）
 - **内网作战（artex-ymh 移植）**：凭据库（AES-GCM 加密落库，密钥由 jwt.key 经 SHA-256 域分离派生，`register_credential`/`suggest_credentials` 工具 + 内网页管理，secret 只进不出；复用打分同网段 +40、域凭据 +35、已验证 +25、服务重叠 +20、NT hash +15）；隧道选型（`tunnel.SelectAdapter`：能出网→chisel、不能出网有 webshell→suo5、portfwd 强制 chisel；`tunnel_plan` 工具 + `/api/tasks/{id}/tunnels/plan` 生成计划并入 `tunnels` 台账，state=deploying）；内网拓扑图（任务过滤：主机 × 服务 + 同网段边，蜜罐打标记）；待授权网段（`report_pending_scope` 工具 + 内网页审批，批准后才写进 task_scope）；外网→内网移交（`POST /api/tasks/{id}/handoff` 建子任务，初始范围只有立足点 /32）；内网页 `/function/intranet`（凭据/隧道/待授权/拓扑与蜜罐四 Tab）
@@ -197,6 +202,7 @@ go build -tags embedui -o forang ./cmd/artex
 - 许可证：AGPL-3.0（见 LICENSE）。
 
 <!-- ver-note -->
+> v0.6.4：证据分级（Pojun L1–L4，实测分级 + critical/high 须 L3+ 才进正式报告，低证据文末单列）· 质量闭环（复核确认/降级/驳回留痕 + 指纹去重事件）· 确定性回归 spec（只记不自动回放）· `artex doctor` 补 v0.6.4 表/列检查。
 > v0.6.3：蜜罐识别 honeydetect（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 静态签名 + 资产评分/UI 徽标 + planner 处置纪律 + worker 反 AI 陷阱红线）· 内网作战（凭据库 AES-GCM + 复用打分、suo5/chisel 隧道选型与计划台账、内网拓扑图、待授权网段审批、外网→内网移交、内网页）· 外部工具钉版清单 + `artex doctor` 预检。
 > v0.6.2：知识包 knowledge-pack（ATT&CK 706 / WSTG 133 / CWE 956 内嵌 + 只读 knowledge_lookup 工具）· finding 指纹去重（report_finding 前确定性去重 + force_register 逃生口）· 修旁路摘要硬编码 Thinking:"disabled"（不再发 thinking 字段，New API 与 Anthropic 双兼容）。
 > v0.6.1：知识库模型独立设置（kb.profile_id 与评审模型解耦，LLM 页评审/知识库模型双下拉框）· 修复 /api/health 版本号显示（构建时注入版本号，不再是 dev）。

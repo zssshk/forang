@@ -1031,6 +1031,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/exploration/findings/merge", s.mergeFindings)
 	mux.HandleFunc("PATCH /api/exploration/findings/{id}", s.patchFinding)
 	mux.HandleFunc("DELETE /api/exploration/findings/{id}", s.deleteFinding)
+	// v0.6.4 质量闭环（Pojun 证据分级 + 质量闭环移植）：复核流程与去重/回归记录。
+	mux.HandleFunc("POST /api/exploration/findings/{id}/review", s.reviewFinding)
+	mux.HandleFunc("GET /api/exploration/findings/{id}/reviews", s.listFindingReviews)
+	mux.HandleFunc("GET /api/exploration/findings/{id}/dedup-events", s.listFindingDedupEvents)
+	mux.HandleFunc("GET /api/exploration/findings/{id}/regression", s.getFindingRegression)
 	mux.HandleFunc("GET /api/exploration/intents", s.intents)
 	mux.HandleFunc("GET /api/exploration/graph", s.explorationGraph)
 	mux.HandleFunc("GET /api/exploration/nodes", s.explorationNodes)

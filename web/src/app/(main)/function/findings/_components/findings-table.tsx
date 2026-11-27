@@ -37,10 +37,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { statusMeta } from "@/lib/status";
-import type { ActiveFindingRetest, Finding, FindingStatus, Severity } from "@/lib/types";
+import type { ActiveFindingRetest, EvidenceLevel, Finding, FindingStatus, Severity } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
+
+// v0.6.4 证据分级（Pojun L1–L4 口径）。
+export const EVIDENCE_LEVELS: EvidenceLevel[] = ["L1", "L2", "L3", "L4"];
 
 export const FINDING_STATUSES: FindingStatus[] = [
   "pending",
@@ -196,7 +199,12 @@ export function FindingsTable({
                   />
                 </TableCell>
                 <TableCell>
-                  <StatusBadge domain="severity" value={f.severity} dot />
+                  <div className="flex flex-col items-start gap-1">
+                    <StatusBadge domain="severity" value={f.severity} dot />
+                    {f.evidence_level ? (
+                      <StatusBadge domain="evidence" value={f.evidence_level} />
+                    ) : null}
+                  </div>
                 </TableCell>
                 <TableCell className="max-w-md">
                   <div className="flex min-w-0 flex-col gap-0.5">
@@ -213,7 +221,14 @@ export function FindingsTable({
                       <span className="truncate font-medium">{f.name || f.vulnclass || "未分类"}</span>
                     )}
                     <span className="truncate text-xs text-muted-foreground">{f.summary}</span>
-                    <Badge variant="outline">流量证据 {f.traffic_count ?? 0} 条</Badge>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Badge variant="outline">流量证据 {f.traffic_count ?? 0} 条</Badge>
+                      {f.report_excluded ? (
+                        <Badge variant="outline" className="border-amber-500/40 text-amber-600 dark:text-amber-400">
+                          未达交付标准
+                        </Badge>
+                      ) : null}
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell>

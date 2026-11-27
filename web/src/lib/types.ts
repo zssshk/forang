@@ -589,6 +589,10 @@ export interface Finding {
   status: FindingStatus;
   summary: string;
   evidence: string;
+  // v0.6.4 证据分级（Pojun L1–L4 口径）：实测等级取 min（自报，实测）。
+  evidence_level?: "" | "L1" | "L2" | "L3" | "L4";
+  confidence?: "" | "low" | "medium" | "high";
+  report_excluded?: boolean; // critical/high 且 <L3：默认不进正式报告
   packet?: string; // 可复现 POC：完整原始 HTTP 请求包（可直粘 Repeater 重放）；空=非 HTTP 类
   report?: string; // 详细报告(Markdown);仅详情接口返回,列表为空
   intent_id?: string;
@@ -658,6 +662,9 @@ export interface FindingTaskOption {
   count: number;
 }
 
+// v0.6.4 证据分级筛选：L1 线索 / L2 行为异常 / L3 可利用 / L4 业务影响。
+export type EvidenceLevel = "L1" | "L2" | "L3" | "L4";
+
 // FindingQuery 是发现列表分页/筛选/排序参数。
 export interface FindingQuery {
   page: number;
@@ -668,8 +675,52 @@ export interface FindingQuery {
   task?: string; // 任务 id;"all"/空 = 不按任务筛选
   query?: string;
   sort?: "severity" | "time";
+  evidenceLevel?: "all" | EvidenceLevel;
   // 资产树节点 key;选中一个节点 = 选中它的整棵子树。空 = 不按资产筛选。
   assetScope?: string;
+}
+
+// v0.6.4 质量闭环：一条复核记录（确认/降级/驳回），留痕可查。
+export type ReviewVerdict = "confirmed" | "downgraded" | "rejected";
+
+export interface FindingReview {
+  id: number;
+  finding_id: number;
+  reviewer: string;
+  verdict: ReviewVerdict;
+  note: string;
+  prev_status: string;
+  new_status: string;
+  prev_severity: string;
+  new_severity: string;
+  created_at: string;
+}
+
+// v0.6.4：指纹去重被拦时也留一条记录（复报可查，不静默消失）。
+export interface FindingDedupEvent {
+  id: number;
+  finding_id: number | null;
+  fingerprint: string;
+  task_id: number | null;
+  vulnclass: string;
+  name: string;
+  created_at: string;
+}
+
+// v0.6.4：确定性回归 spec（只记 spec，不自动回放、不发请求）。
+export interface FindingRegression {
+  id: number;
+  finding_id: number;
+  baseline_traffic_id: string | null; // 流量快照 id（字符串）
+  proof_traffic_id: string | null;
+  method: string;
+  url: string;
+  assertion: string;
+  expected_status: number | null;
+  token: string;
+  last_verdict: string;
+  last_checked_at: string | null;
+  created_at: string;
 }
 
 // ---- Findings by asset (资产视图) ----

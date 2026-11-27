@@ -329,6 +329,9 @@ type RecordFindingInput struct {
 	TaskID, ExplorationID, IntentID                      int64
 	VulnClass, Name, Severity, Summary, Evidence, Worker string
 	AssetIDs                                             []int64
+	// EvidenceLevel 是 worker 自报的证据等级（L1–L4，可选）：生效等级 =
+	// min(自报, 实测)，自报高于实测时以实测为准；空 = 全自动分级。
+	EvidenceLevel string
 	// Packet 是可复现 POC 的完整原始 HTTP 请求包（GET/POST … HTTP/1.1 + 头 + 空行 + 体），
 	// 可直接粘进 Repeater 重放。非 HTTP 类漏洞留空（审计类漏洞给文件:行号证据）。
 	Packet string
@@ -338,6 +341,10 @@ type RecordedFinding struct {
 	FindingID int64           `json:"finding_id,string"`
 	NodeID    int64           `json:"finding_node_id,string"`
 	Traffic   *FindingTraffic `json:"traffic"`
+	// v0.6.4 证据分级结果（Pojun L1–L4）：生效等级/置信度/是否排除出正式报告。
+	EvidenceLevel  string `json:"evidence_level,omitempty"`
+	Confidence     string `json:"confidence,omitempty"`
+	ReportExcluded bool   `json:"report_excluded"`
 }
 
 // ctx 由调用方传入本次事务所用的上下文（而非在内部取 context.Background）：
@@ -385,8 +392,23 @@ VALUES($1,'finding',$2,9,'confirmed',$3) RETURNING id`, in.ExplorationID, string
 		assets = []int64{}
 	}
 	raw, _ := json.Marshal(assets)
-	if err := tx.QueryRow(`INSERT INTO findings(task_id,node_id,vulnclass,name,severity,summary,evidence,worker,asset_ids,packet)
-VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw), in.Packet).Scan(&out.FindingID); err != nil {
+	// v0.6.4 证据分级（Pojun L1–L4）：按证据文本 + 本次绑定的流量角色实测分级，
+	// 自报等级高于实测时以实测为准；critical/high 且低于 L3 时默认排除出正式报告。
+	var hasProof, hasVerification bool
+	for _, p := range prepared {
+		switch p.Ref.Role {
+		case "proof":
+			hasProof = true
+		case "verification":
+			hasVerification = true
+		}
+	}
+	measured := GradeEvidence(in.VulnClass, in.Name, in.Summary, in.Evidence, in.Packet, hasProof, hasVerification)
+	out.EvidenceLevel = EffectiveEvidenceLevel(in.EvidenceLevel, measured)
+	out.Confidence = EvidenceConfidence(out.EvidenceLevel)
+	out.ReportExcluded = ReportExcludedForGrade(in.Severity, out.EvidenceLevel)
+	if err := tx.QueryRow(`INSERT INTO findings(task_id,node_id,vulnclass,name,severity,summary,evidence,worker,asset_ids,packet,evidence_level,confidence,report_excluded)
+VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw), in.Packet, out.EvidenceLevel, out.Confidence, out.ReportExcluded).Scan(&out.FindingID); err != nil {
 		return nil, err
 	}
 	// 在**同一事务**里登记一条推送事件：提交即保证「漏洞落库」与「推送任务存在」
@@ -403,6 +425,11 @@ VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, in.TaskID, out.N
 		AssetIDs:  assets,
 	})
 	if err := AddFindingTrafficTx(tx, out.FindingID, prepared); err != nil {
+		return nil, err
+	}
+	// v0.6.4 确定性回归 spec（Pojun finding_regressions 轻量版）：绑了 proof 流量
+	// 即生成一条可重放断言的 spec；无 proof 流量时不生成假 spec。只记录，不回放。
+	if err := UpsertFindingRegressionTx(tx, out.FindingID, in, prepared); err != nil {
 		return nil, err
 	}
 	var err error
