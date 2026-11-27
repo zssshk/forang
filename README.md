@@ -161,7 +161,7 @@ go build -tags embedui -o forang ./cmd/artex
 
 ## 版本
 
-当前 **v0.6.0**（2026-11-22，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+当前 **v0.6.1**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
 
 - **第二 C2 后端 emp3r0r 融合**：宿主机侧 bridge（持 WireGuard 凭据 + spawn `emp3r0r mcp`）把 emp3r0r 封装成本地 REST，会话/任务以 `emp3r0r:` 前缀与 goc2 并列；Classic 控制台全量覆盖（会话/sysinfo/敏感文件搜集/插件/资料库/任务列表），`EMP3R0R_C2_ENDPOINT` 注入只读虚拟监听器（载荷走免杀投放器）；在线统计改按心跳时间窗判定（活 beacon 不再被算 offline）
 - **面板弹药库与 PoC 联动**：exploits 上传/投送（双后端分块：emp3r0r 4KB / goc2 256KB）、选择器 v2（评分制递归扫描，53/60 命中）、`GET /api/pocs` 附 CVE→弹药映射、资产批量匹配一键投送；MCP 运营面、KB 蒸馏、每日 PoC 同步（gate cookie 修复）
@@ -188,6 +188,7 @@ go build -tags embedui -o forang ./cmd/artex
 - 许可证：AGPL-3.0（见 LICENSE）。
 
 <!-- ver-note -->
+> v0.6.1：知识库模型独立设置（kb.profile_id 与评审模型解耦，LLM 页评审/知识库模型双下拉框）· 修复 /api/health 版本号显示（构建时注入版本号，不再是 dev）。
 > v0.6.0：emp3r0r 第二 C2 后端（bridge/MCP 融合，Classic 控制台全量覆盖）· 面板弹药库（exploits 投送 / 选择器 v2 / PoC 联动）· 免杀投放器 · MCP 运营面 · KB 蒸馏 · 每日 PoC 同步。
 > v0.5.65：zip/unzip 失败回显带原因与路径，空包/非 zip 不再回 OK 0。
 > v0.5.64：PHP 载体 zip/unzip 与 Java 对齐（空目录保留、解包挡越界条目）。
