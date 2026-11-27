@@ -269,7 +269,7 @@ func (d *DB) DetectionReviewQueue(ctx context.Context, taskID int64) ([]detectio
 	var err error
 	q := `SELECT f.id,f.vulnclass,COALESCE(f.name,''),f.severity,COALESCE(f.evidence_level,''),
 COALESCE(f.status,'pending'),f.created_at,COUNT(fd.id),
-COALESCE(array_agg(fd.slug) FILTER (WHERE fd.slug <> ''), '{}')
+COALESCE(array_to_string(array_agg(fd.slug) FILTER (WHERE fd.slug <> ''), ','), '')
 FROM findings f LEFT JOIN finding_detections fd ON fd.finding_id=f.id
 WHERE COALESCE(f.status,'pending') IN ('pending','in_progress')`
 	if taskID > 0 {
@@ -284,9 +284,13 @@ WHERE COALESCE(f.status,'pending') IN ('pending','in_progress')`
 	var items []detections.ReviewItem
 	for rows.Next() {
 		var it detections.ReviewItem
+		var slugs string // pgx 经 database/sql 把数组字面量当 string 返，逗号拼（slug 不含逗号）
 		if err := rows.Scan(&it.FindingID, &it.VulnClass, &it.Name, &it.Severity, &it.EvidenceLevel,
-			&it.Status, &it.CreatedAt, &it.HitCount, &it.RuleSlugs); err != nil {
+			&it.Status, &it.CreatedAt, &it.HitCount, &slugs); err != nil {
 			return nil, err
+		}
+		if slugs != "" {
+			it.RuleSlugs = strings.Split(slugs, ",")
 		}
 		items = append(items, it)
 	}
