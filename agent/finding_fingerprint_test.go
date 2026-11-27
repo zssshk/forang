@@ -70,6 +70,11 @@ func fingerprintFindingNodes(t *testing.T, ts *ToolSet) []*db.Node {
 	if err != nil {
 		t.Fatalf("list findings: %v", err)
 	}
+	// ListByKind does not populate Node.FindingID ("populated by finding-aware
+	// reads"); without this the assertion below reads FindingID=0.
+	if err := ts.ts.PopulateFindingTrafficIDs(nodes); err != nil {
+		t.Fatalf("populate finding ids: %v", err)
+	}
 	return nodes
 }
 
