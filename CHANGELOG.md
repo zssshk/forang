@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-11-27
+
+### ssh 会话驱动（v0.6.5 立足点会话子系统的预留位补齐，核心）
+
+- **驱动**：新增 `session/ssh.go`（`golang.org/x/crypto/ssh` v0.55.0，已在 go.mod，无新依赖）：标准 SSH 客户端驱动，不涉及载荷生成。密码 或 PEM 私钥认证（二选一，可同时给，私钥优先；私钥可带 `key_passphrase`）；每次操作新建连接（拨号即用、用完即关），不留僵尸连接、不做连接池；命令直接经 SSH 通道执行（目标 shell 解释，多行直传，无需哨兵；通道本身带退出码与完整输出）。
+- **命令语义**：与 webshell 驱动保持同一语义——命令非零退出只返回输出（不把输出当错误丢掉），只有拨号/通道等传输失败才经 err 返回；ctx 超时即关 session 中断执行。
+- **文件读写**：走 base64 命令通道（不引 pkg/sftp 新依赖）：读文件先 `wc -c` 限 5MB（超大拒绝并明说），再 `base64 -w0` 整取；写文件分块 append（首块截断、后块追加，写后 `wc -c` 校验大小一致）。分块 48KB（base64 后约 64KB）：须小于 Linux 单个 argv 上限 128KB（MAX_ARG_STRLEN），200KB 块实测直接报 Argument list too long、通道 EOF。
+- **主机密钥**：`host_key_check=ignore`（缺省，只连操作员给定的授权目标）或 `fingerprint`（须同时给 `host_key_sha256`，形如 `SHA256:…`，不符拒绝连接）。注意：服务端有多把主机密钥时以握手实际协商的那把为准（DSH 实测协商到 ECDSA 那把，不是 ssh-keyscan -t ed25519 取到的那把）。
+- **接线**：`session/driver.go` 补 ssh 分支（secret 解析失败拒绝建驱动）；`register_session` 与 HTTP `POST /api/tasks/{id}/sessions` 均补 ssh 参数（host/port/username/private_key/key_passphrase/host_key_check/host_key_sha256/timeout_sec），secret 组装收进 `session.BuildSSHSecret` 共用一份（agent 与 server 不再各写一份校验）；登记后立即 Test，不通记 dead；会话列表地址栏显示 `ssh://user@host:port`。secret 仍走 sessions 表 AES-GCM 加密落库（域标签 `artex/sessions/v1`），不另起一套。
+- **UI**：内网立足点会话登记表单新增 ssh 类型（主机/端口/用户名/密码或私钥 PEM/主机密钥指纹选填，填指纹即钉死）；`web/src/lib/api.ts` 的 `createSession` 类型补齐新字段。
+
+### 工程
+
+- **测试**：`session/ssh_test.go`——纯函数单测（BuildSSHSecret/NewSSHSession 校验、shellQuote、DriverFor ssh 分支）本地全过；env 门控真机测试（`FORANG_SSH_TEST_ADDR`/`USER`/`KEY`/`FINGERPRINT`，未设跳过）对 DSH 本机（168.107.31.222:5522，密钥认证）实测通过：Test 探针、单行/多行 Exec、非零退出照常返回输出、文件往返（小文件 + 500KB 分块 + 空文件）、读不存在文件明确报错、错指纹拒绝连接、正确指纹（ECDSA）全通。`go vet` 通过（仅剩 `server/evasion.go` 旧警告）；前端 `tsc --noEmit` 通过。
+- **教训**：`ssh.Dialer` 在 x/crypto v0.55.0 里不存在（只有无 ctx 的 `ssh.Dial`），拨号超时用 goroutine + ctx select 实现。
+
+### 遗留（后续项，未装进本版）
+
+- penelope spawn 路径未在真机实测拉起（已配现成 MCP 端点是主路径）；隧道投递与 session_recon 的真实立足点实测仍待用户自备 webshell 立足点后重约（ssh 会话现可作 deploy 的经由通道，deploy 本身尚未用 ssh 会话真投过）。
+- session_exec 对超长单条命令（>128KB）仍受远端 `sh -c` 的 argv 上限约束，超大命令请分段或先 WriteFile 落盘再执行。
+
 ## [0.6.6] - 2026-11-27
 
 ### 检测规则包（artex-global detections/ 移植，核心）

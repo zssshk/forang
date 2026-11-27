@@ -1,5 +1,5 @@
 // Package session 是立足点会话子系统（v0.6.5 artex-ymh 移植，内网渗透期 1a）。
-// 所有驱动（http webshell、reverse 反弹 shell、ssh 预留）实现同一 Session
+// 所有驱动（http webshell、reverse 反弹 shell、ssh）实现同一 Session
 // 抽象，agent 只看到「会话工具」，目标侧命令的唯一出口是 Session.Exec /
 // ReadFile / WriteFile。落库层见 db/sessions.go（secret AES-GCM 加密）。
 //

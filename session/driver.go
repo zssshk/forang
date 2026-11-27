@@ -31,7 +31,7 @@ type reverseSecret struct {
 }
 
 // DriverFor 按记录建驱动。reverse 会话需要 penelope MCP 调用器（caller）；
-// http 会话不需要（caller 可为 nil）。ssh 为预留类型，暂无驱动，诚实报错。
+// http 与 ssh 会话不需要（caller 可为 nil）。
 func DriverFor(rec *db.SessionRecord, caller MCPCaller) (Session, error) {
 	if rec == nil {
 		return nil, opError("probe", "会话记录为空")
@@ -61,6 +61,20 @@ func DriverFor(rec *db.SessionRecord, caller MCPCaller) (Session, error) {
 			Encoder: sec.Encoder, Timeout: timeout,
 			AllowPlaintext: sec.AllowPlaintext, ExtraHeaders: sec.Headers, Proxy: sec.Proxy,
 		})
+	case db.SessionSSH:
+		var sec SSHSecret
+		if strings.TrimSpace(rec.Secret) != "" {
+			if err := json.Unmarshal([]byte(rec.Secret), &sec); err != nil {
+				return nil, opError("probe", "会话 secret 解析失败: %v", err)
+			}
+		}
+		return NewSSHSession(rec.ID, SSHConfig{
+			Host: sec.Host, Port: sec.Port, Username: sec.Username,
+			Password: sec.Password, PrivateKey: sec.PrivateKey,
+			KeyPassphrase: sec.KeyPassphrase, HostKeyCheck: sec.HostKeyCheck,
+			HostKeySHA256: sec.HostKeySHA256,
+			Timeout:       time.Duration(sec.TimeoutSec) * time.Second,
+		})
 	case db.SessionReverse:
 		var sec reverseSecret
 		if strings.TrimSpace(rec.Secret) != "" {
@@ -73,6 +87,6 @@ func DriverFor(rec *db.SessionRecord, caller MCPCaller) (Session, error) {
 		}
 		return NewPenelopeSession(rec.ID, sec.PenSessionID, caller)
 	default:
-		return nil, fmt.Errorf("会话类型 %q 暂无驱动（ssh 为预留类型）", rec.Kind)
+		return nil, fmt.Errorf("未知会话类型 %q", rec.Kind)
 	}
 }

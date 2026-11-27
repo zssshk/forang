@@ -90,15 +90,25 @@ func (t *ToolSet) registerSession() actool.CoreTool {
 		"登记一个立足点会话（webshell / 反弹 shell / ssh）。kind=http_php|http_jsp|http_aspx|reverse|ssh；"+
 			"http 类需 url + password + encoder(aes|xor，明文 encoder=raw 须显式 allow_plaintext=true，否则拒绝登记）；"+
 			"reverse 类需 pen_session_id（penelope 会话号，见 reverse_listen 同步结果）。"+
+			"ssh 类需 host + username + password 或 private_key（至少一种认证，私钥优先；私钥可带 key_passphrase）；"+
+			"host_key_check 缺省 ignore（只连授权目标），fingerprint 时须给 host_key_sha256 指纹钉死主机密钥。"+
 			"登记后立即 Test：不通则记为 dead 并如实返回失败原因（会话仍登记，可修复后重新登记）。secret 只进加密库，出参不回显。",
 		obj(map[string]any{
 			"kind":            str("会话类型：http_php|http_jsp|http_aspx|reverse|ssh"),
 			"url":             str("webshell URL（http 类必填）"),
-			"password":        str("webshell 连接口令（http 类必填，aes/xor 加密必填）"),
+			"password":        str("webshell 连接口令（http 类必填，aes/xor 加密必填）；ssh 类的密码认证"),
 			"encoder":         str("webshell 编码器：aes|xor|raw（缺省 aes；raw 须显式 allow_plaintext=true)"),
 			"script_type":     str("脚本类型：php|jsp|aspx（缺省按 kind 推断）"),
 			"allow_plaintext": map[string]any{"type": "boolean", "description": "是否允许明文通道（仅测试用，生产勿开）"},
 			"pen_session_id":  idp("penelope 会话号（reverse 类必填）"),
+			"host":            str("ssh 目标主机（ssh 类必填，IP 或域名）"),
+			"port":            intp("ssh 端口（ssh 类可选，缺省 22)"),
+			"username":        str("ssh 用户名（ssh 类必填）"),
+			"private_key":     str("ssh 私钥 PEM 文本（ssh 类可选，与 password 至少给一个）"),
+			"key_passphrase":  str("ssh 私钥口令（私钥加密时必填）"),
+			"host_key_check":  str("ssh 主机密钥校验：ignore（缺省）|fingerprint"),
+			"host_key_sha256": str("ssh 主机密钥 SHA256 指纹（fingerprint 时必填，形如 SHA256:…）"),
+			"timeout_sec":     intp("ssh 连接超时秒数（缺省 30)"),
 			"host_asset_id":   idp("关联的立足点主机资产 id（可选）"),
 			"credential_id":   idp("关联的凭据 id（可选）"),
 			"lang":            str("目标语言/备注（可选，如 php5.6/jsp)"),
@@ -112,6 +122,14 @@ func (t *ToolSet) registerSession() actool.CoreTool {
 				ScriptType     string `json:"script_type"`
 				AllowPlaintext bool   `json:"allow_plaintext"`
 				PenSessionID   int64  `json:"pen_session_id"`
+				Host           string `json:"host"`
+				Port           int    `json:"port"`
+				Username       string `json:"username"`
+				PrivateKey     string `json:"private_key"`
+				KeyPassphrase  string `json:"key_passphrase"`
+				HostKeyCheck   string `json:"host_key_check"`
+				HostKeySHA256  string `json:"host_key_sha256"`
+				TimeoutSec     int    `json:"timeout_sec"`
 				HostAssetID    int64  `json:"host_asset_id"`
 				CredentialID   int64  `json:"credential_id"`
 				Lang           string `json:"lang"`
@@ -123,13 +141,22 @@ func (t *ToolSet) registerSession() actool.CoreTool {
 			if st == nil {
 				return actool.Errorf("会话子系统不可用（缺 asset store 或 jwt.key)"), nil
 			}
-			secret, err := buildSessionSecret(in.Kind, in.URL, in.Password, in.Encoder, in.ScriptType, in.AllowPlaintext, in.PenSessionID)
+			secret, err := buildSessionSecret(in.Kind, in.URL, in.Password, in.Encoder, in.ScriptType, in.AllowPlaintext, in.PenSessionID,
+				in.Host, in.Port, in.Username, in.PrivateKey, in.KeyPassphrase, in.HostKeyCheck, in.HostKeySHA256, in.TimeoutSec)
 			if err != nil {
 				return actool.Errorf(err.Error()), nil
 			}
+			url := in.URL
+			if in.Kind == db.SessionSSH {
+				port := in.Port
+				if port <= 0 {
+					port = 22
+				}
+				url = fmt.Sprintf("ssh://%s@%s:%d", in.Username, strings.TrimSpace(in.Host), port)
+			}
 			rec := &db.SessionRecord{
 				TaskID: t.taskID, Kind: in.Kind, HostAssetID: in.HostAssetID,
-				CredentialID: in.CredentialID, URL: in.URL, Secret: string(secret),
+				CredentialID: in.CredentialID, URL: url, Secret: string(secret),
 				Lang: in.Lang, Status: db.SessionAlive, CreatedByTask: t.taskID,
 			}
 			id, err := st.Create(ctx, rec)
@@ -159,8 +186,10 @@ func (t *ToolSet) registerSession() actool.CoreTool {
 }
 
 // buildSessionSecret 按 kind 组装会话 secret JSON（明文口令只在此处出现，
-// 调用方 Create 即加密落库；出参绝不回显）。
-func buildSessionSecret(kind, url, password, encoder, scriptType string, allowPlaintext bool, penSessionID int64) (json.RawMessage, error) {
+// 调用方 Create 即加密落库；出参绝不回显）。ssh 的校验与组装走
+// session.BuildSSHSecret（与 server 侧共用，只此一份）。
+func buildSessionSecret(kind, url, password, encoder, scriptType string, allowPlaintext bool, penSessionID int64,
+	host string, port int, username, privateKey, keyPassphrase, hostKeyCheck, hostKeySHA256 string, timeoutSec int) (json.RawMessage, error) {
 	switch kind {
 	case db.SessionHTTP, db.SessionHTTPJSP, db.SessionHTTPASPX:
 		if strings.TrimSpace(url) == "" {
@@ -187,7 +216,7 @@ func buildSessionSecret(kind, url, password, encoder, scriptType string, allowPl
 		b, _ := json.Marshal(map[string]any{"pen_session_id": penSessionID})
 		return b, nil
 	case db.SessionSSH:
-		return nil, fmt.Errorf("ssh 会话暂无驱动（仅登记无意义）：先用 http/reverse 立足点")
+		return session.BuildSSHSecret(host, port, username, password, privateKey, keyPassphrase, hostKeyCheck, hostKeySHA256, timeoutSec)
 	default:
 		return nil, fmt.Errorf("未知会话类型 %q", kind)
 	}

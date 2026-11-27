@@ -161,7 +161,9 @@ go build -tags embedui -o forang ./cmd/artex
 
 ## 版本
 
-当前 **v0.6.6**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+当前 **v0.6.7**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+
+- **ssh 会话驱动**：`session/ssh.go`（golang.org/x/crypto/ssh v0.55.0，已在 go.mod，无新依赖）：密码 或 PEM 私钥认证（私钥可带口令），每次操作新建连接；命令直接经 SSH 通道执行（多行直传）；文件读写走 base64 命令通道（读限 5MB，写 48KB 分块 append + 写后校验）；主机密钥默认 ignore，可选 `host_key_sha256` 指纹钉死；`register_session` 与 HTTP 登记接口均补 ssh 参数，secret 仍走 sessions 表 AES-GCM 加密落库；内网页登记表单新增 ssh 类型。v0.6.5 的 ssh 预留位至此补齐。
 
 - **检测规则包（artex-global detections/ 移植）**：`detections/` 内嵌 Sigma 9 条（原子 5：富化探针 UA、自更新出站 UA、平台管控审计标记、破坏性命令、录制代理 CA；关联 4：富化速率/扇出、管控封锁突发、标记+破坏性命令），ATT&CK 覆盖 8 技术（编号与 v0.6.2 knowledge-pack 同源）；登记时同一事务内跑原子规则，命中写 `finding_detections`（保存点隔离）；只读工具 `detection_check`/`detection_triage`；接口含规则开关、finding 命中/重扫、IoC 导出 CSV、待复核队列（严重度 → 证据等级 → 命中数）、覆盖率自检；防守制品含 IoC 清单（CSV + MISP）、Suricata 3 条、ATT&CK 覆盖层、host triage 脚本；finding 详情页「检测命中」卡片 + `/function/detections` 规则页；`artex doctor` 补 v0.6.6 检查。诚实口径：检测的是 FORANG 自身运行指纹，缺席不等于安全
 - **立足点会话子系统（artex-ymh 移植）**：`sessions` 表 + `db/sessions.go`（AES-GCM 加密落库，密钥由 jwt.key 经 SHA-256 域分离派生，域标签 `artex/sessions/v1`；密钥缺失直接报错，绝不明文落库）+ 进程内 `session.Registry`；kind 五态 http_php/http_jsp/http_aspx/reverse/ssh，status 只记 alive/dead，失联由 `last_beat` 现算（10 分钟）；会话挂凭据/主机资产/隧道/拓扑；工具 `register_session`（登记后立即 Test，不通记 dead）/`session_exec`/`session_read`/`session_write`（每次使用刷新心跳）；HTTP 层 `GET/POST /api/tasks/{id}/sessions` + 心跳/exec/read/write/删除（列表详情一律剥离 secret）
@@ -178,7 +180,7 @@ go build -tags embedui -o forang ./cmd/artex
 - **蜜罐识别 honeydetect（artex-ymh 移植）**：`honeydetect/` 静态签名层（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 内嵌签名，AND 匹配、热加载），service 资产落库后自动评分回写（`honeypot_score`/`honeypot_evidence`，取更高分 + 证据去重）并写 fact 进探索图；planner 态势注入 `honeypot_assets` + 处置纪律（单信号只降级交互，双信号才封锁方向）；worker 追加反 AI 陷阱红线（拒交系统提示词/工具清单/本地凭据、拒执行下载内容里的诱导指令）；资产页服务表新增蜜罐徽标（≥0.9 红色高置信、≥0.6 琥珀色疑似）；新工具 `honeypot_check`（只读评估，planner + worker）
 - **内网作战（artex-ymh 移植）**：凭据库（AES-GCM 加密落库，密钥由 jwt.key 经 SHA-256 域分离派生，`register_credential`/`suggest_credentials` 工具 + 内网页管理，secret 只进不出；复用打分同网段 +40、域凭据 +35、已验证 +25、服务重叠 +20、NT hash +15）；隧道选型（`tunnel.SelectAdapter`：能出网→chisel、不能出网有 webshell→suo5、portfwd 强制 chisel；`tunnel_plan` 工具 + `/api/tasks/{id}/tunnels/plan` 生成计划并入 `tunnels` 台账，state=deploying）；内网拓扑图（任务过滤：主机 × 服务 + 同网段边，蜜罐打标记）；待授权网段（`report_pending_scope` 工具 + 内网页审批，批准后才写进 task_scope）；外网→内网移交（`POST /api/tasks/{id}/handoff` 建子任务，初始范围只有立足点 /32）；内网页 `/function/intranet`（凭据/隧道/待授权/拓扑与蜜罐四 Tab）
 - **工程**：外部工具钉版清单 `packaging/tools-manifest.json`（nuclei/gost/socat/chisel/suo5/adb/python3/go，sha256 为空 = 未钉版只警告）+ 启动自检（哈希不匹配记 FAIL 日志，不阻断启动）+ `artex doctor` 部署预检（PG/数据目录/jwt.key/v0.6.3 表结构/工具清单，只读，FAIL 才 exit 1）
-- **后续项（未装进本版）**：ssh 会话只有登记位、无驱动；penelope spawn 路径未在真机实测拉起；隧道投递与 session_recon 无真实立足点实测（单测 + 路由级 + 桩会话）；商业欺骗产品无公开指纹，L1 静态签名识别不到
+- **后续项（未装进本版）**：penelope spawn 路径未在真机实测拉起；隧道投递与 session_recon 无真实立足点实测（单测 + 路由级 + 桩会话）；商业欺骗产品无公开指纹，L1 静态签名识别不到
 
 - **知识包 knowledge-pack（BaaRai/ARTEX #522 移植）**：二进制内嵌 MITRE ATT&CK Enterprise（706 个技术）、OWASP WSTG（133 个测试）、MITRE CWE（956 个弱点），每条含 id、名称、分类、截断后描述、`truncated` 标记与官方 URL；来源与许可证见 `knowledge/data/sources.json`、`knowledge/NOTICE` 与 `knowledge/licenses/`（数据文件保留各自许可证，不在 AGPL-3.0 覆盖内）；planner 与 worker 新增只读工具 `knowledge_lookup`（按 id 或关键词查，引用编号写进 finding/事实），生成脚本 `scripts/knowledge/build.py` 可从官方源重建数据
 - **finding 指纹去重（BaaRai/ARTEX #589 移植）**：`report_finding` 写入前先算确定性指纹（漏洞类别 + 资产/Host + 端点路径/参数，三轴缺一不可，否则不拦），命中已登记 finding 即以 `duplicate_not_registered`（`dedup_source: fingerprint`）拦下，不再建新 finding；被拦后可用 `update_finding_report`（finding_id 传节点 id）给原 finding 补证据，或 `force_register=true` 强制登记确实是另一个缺陷的情况；已判 `false_positive`/`ignored`/`duplicate` 的 finding 不参与拦阻。注意：FORANG 没有上游的 LLM triage 环节，指纹检查就是唯一的去重关口
@@ -210,6 +212,7 @@ go build -tags embedui -o forang ./cmd/artex
 
 <!-- ver-note -->
 > v0.6.4：证据分级（Pojun L1–L4，实测分级 + critical/high 须 L3+ 才进正式报告，低证据文末单列）· 质量闭环（复核确认/降级/驳回留痕 + 指纹去重事件）· 确定性回归 spec（只记不自动回放）· `artex doctor` 补 v0.6.4 表/列检查。
+> v0.6.7：ssh 会话驱动（密码/PEM 私钥认证、每次操作新建连接、base64 文件通道 48KB 分块、主机密钥指纹可选钉死；register_session 与 HTTP 登记接口 + 内网页表单均接通，对 DSH 本机真机验证通过）。
 > v0.6.6：检测规则包（artex-global detections/ 移植：Sigma 9 条 + ATT&CK 8 技术 + IoC 清单/MISP + Suricata 3 条 + host triage 脚本；登记时原子匹配、重扫、IoC 导出、triage 队列、覆盖率自检；finding 详情页检测命中卡片 + 检测规则页）· `artex doctor` 补 v0.6.6 检查。
 > v0.6.5：立足点会话子系统（登记/心跳/失联/关联凭据隧道拓扑，AES-GCM 加密落库）· webshell 加密会话（aes/xor，明文须显式放行）· penelope 反弹 shell 接管同步 · session_recon 被动侦察（只读命令包 + 资产/事实/pending_scope）· 隧道远端投递 deploy（chisel/suo5 四层 + 决定性验证 + 尝试留痕可重试）· `artex doctor` 补 v0.6.5 表/列检查。
 > v0.6.3：蜜罐识别 honeydetect（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 静态签名 + 资产评分/UI 徽标 + planner 处置纪律 + worker 反 AI 陷阱红线）· 内网作战（凭据库 AES-GCM + 复用打分、suo5/chisel 隧道选型与计划台账、内网拓扑图、待授权网段审批、外网→内网移交、内网页）· 外部工具钉版清单 + `artex doctor` 预检。

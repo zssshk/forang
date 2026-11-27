@@ -444,7 +444,7 @@ export const api = {
     get<{ attempts: { id: number; adapter: string; status: string; detail: string; created_at: string }[] }>(
       `/tasks/${id}/tunnels/${tid}/attempts`),
   // ---- 立足点会话（v0.6.5)----
-  createSession: (id: string, body: { kind: string; url?: string; password?: string; encoder?: string; script_type?: string; allow_plaintext?: boolean; pen_session_id?: number; host_asset_id?: number; credential_id?: number; lang?: string }) =>
+  createSession: (id: string, body: { kind: string; url?: string; password?: string; encoder?: string; script_type?: string; allow_plaintext?: boolean; pen_session_id?: number; host?: string; port?: number; username?: string; private_key?: string; key_passphrase?: string; host_key_check?: string; host_key_sha256?: string; timeout_sec?: number; host_asset_id?: number; credential_id?: number; lang?: string }) =>
     post<{ session: SessionMeta; tested?: boolean; error?: string }>(`/tasks/${id}/sessions`, body),
   heartbeatSession: (id: string, sid: number) =>
     post<{ session: SessionMeta }>(`/tasks/${id}/sessions/${sid}/heartbeat`, {}),

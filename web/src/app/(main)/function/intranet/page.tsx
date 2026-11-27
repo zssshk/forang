@@ -469,6 +469,11 @@ function SessionPanel({ taskId, sessions, onReload }: {
   const [url, setUrl] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [encoder, setEncoder] = React.useState("aes");
+  const [host, setHost] = React.useState("");
+  const [port, setPort] = React.useState("22");
+  const [username, setUsername] = React.useState("");
+  const [privateKey, setPrivateKey] = React.useState("");
+  const [hostKeySHA256, setHostKeySHA256] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [reversePort, setReversePort] = React.useState("4444");
   const [reverseBusy, setReverseBusy] = React.useState(false);
@@ -479,6 +484,11 @@ function SessionPanel({ taskId, sessions, onReload }: {
       const r = await api.createSession(taskId, {
         kind, url: url.trim() || undefined, password: password || undefined,
         encoder, script_type: undefined,
+        host: host.trim() || undefined, port: Number(port) || undefined,
+        username: username.trim() || undefined,
+        private_key: privateKey.trim() || undefined,
+        host_key_check: hostKeySHA256.trim() ? "fingerprint" : undefined,
+        host_key_sha256: hostKeySHA256.trim() || undefined,
       });
       if (r.error) {
         toast.error(`会话已登记但未连通：${r.error}`);
@@ -486,6 +496,7 @@ function SessionPanel({ taskId, sessions, onReload }: {
         toast.success(`会话 #${r.session.id} 已登记并连通`);
       }
       setPassword("");
+      setPrivateKey("");
       onReload();
     } catch (e) {
       toast.error(`登记失败：${e instanceof Error ? e.message : String(e)}`);
@@ -510,7 +521,7 @@ function SessionPanel({ taskId, sessions, onReload }: {
   return (
     <div className="flex flex-col gap-4">
       <Card>
-        <CardHeader><CardTitle className="text-base">登记立足点会话（webshell 加密通道；口令只进加密库，不回显）</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">登记立足点会话（webshell 加密通道 / ssh；口令与私钥只进加密库，不回显）</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3">
           <div className="grid gap-1"><Label>类型</Label>
             <Select value={kind} onValueChange={setKind}>
@@ -520,10 +531,21 @@ function SessionPanel({ taskId, sessions, onReload }: {
                 <SelectItem value="http_jsp">http_jsp</SelectItem>
                 <SelectItem value="http_aspx">http_aspx</SelectItem>
                 <SelectItem value="reverse">reverse</SelectItem>
+                <SelectItem value="ssh">ssh</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          {kind !== "reverse" && (
+          {kind === "ssh" && (
+            <>
+              <div className="grid gap-1"><Label>主机</Label><Input value={host} onChange={(e) => setHost(e.target.value)} className="w-44" placeholder="10.0.0.5 或域名" /></div>
+              <div className="grid gap-1"><Label>端口</Label><Input value={port} onChange={(e) => setPort(e.target.value)} className="w-20" inputMode="numeric" placeholder="22" /></div>
+              <div className="grid gap-1"><Label>用户名</Label><Input value={username} onChange={(e) => setUsername(e.target.value)} className="w-32" placeholder="ubuntu" /></div>
+              <div className="grid gap-1"><Label>密码（与私钥二选一）</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-40" /></div>
+              <div className="grid gap-1"><Label>私钥 PEM（与密码二选一）</Label><Input type="password" value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} className="w-64" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----…" /></div>
+              <div className="grid gap-1"><Label>主机密钥指纹（可选，填即钉死）</Label><Input value={hostKeySHA256} onChange={(e) => setHostKeySHA256(e.target.value)} className="w-64" placeholder="SHA256:…" /></div>
+            </>
+          )}
+          {kind !== "reverse" && kind !== "ssh" && (
             <>
               <div className="grid gap-1"><Label>Webshell URL</Label><Input value={url} onChange={(e) => setUrl(e.target.value)} className="w-64" placeholder="http://10.0.0.5/shell.php" /></div>
               <div className="grid gap-1"><Label>口令</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-40" /></div>
@@ -535,7 +557,7 @@ function SessionPanel({ taskId, sessions, onReload }: {
               </div>
             </>
           )}
-          <Button onClick={() => void submit()} disabled={busy || (kind !== "reverse" && (!url.trim() || !password))}>登记并测试</Button>
+          <Button onClick={() => void submit()} disabled={busy || (kind !== "reverse" && kind !== "ssh" && (!url.trim() || !password)) || (kind === "ssh" && (!host.trim() || !username.trim() || (!password && !privateKey.trim())))}>登记并测试</Button>
         </CardContent>
         <CardContent className="flex flex-wrap items-end gap-3 pt-0">
           <div className="grid gap-1"><Label>penelope 接管端口</Label><Input value={reversePort} onChange={(e) => setReversePort(e.target.value)} className="w-24" inputMode="numeric" /></div>

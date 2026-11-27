@@ -109,6 +109,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		ScriptType     string `json:"script_type"`
 		AllowPlaintext bool   `json:"allow_plaintext"`
 		PenSessionID   int64  `json:"pen_session_id"`
+		Host           string `json:"host"`
+		Port           int    `json:"port"`
+		Username       string `json:"username"`
+		PrivateKey     string `json:"private_key"`
+		KeyPassphrase  string `json:"key_passphrase"`
+		HostKeyCheck   string `json:"host_key_check"`
+		HostKeySHA256  string `json:"host_key_sha256"`
+		TimeoutSec     int    `json:"timeout_sec"`
 		HostAssetID    int64  `json:"host_asset_id"`
 		CredentialID   int64  `json:"credential_id"`
 		Lang           string `json:"lang"`
@@ -121,15 +129,24 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "会话加密主钥未配置（jwt.key)，拒绝明文落库")
 		return
 	}
-	secret, err := buildSessionSecret(req.Kind, req.URL, req.Password, req.Encoder, req.ScriptType, req.AllowPlaintext, req.PenSessionID)
+	secret, err := buildSessionSecret(req.Kind, req.URL, req.Password, req.Encoder, req.ScriptType, req.AllowPlaintext, req.PenSessionID,
+		req.Host, req.Port, req.Username, req.PrivateKey, req.KeyPassphrase, req.HostKeyCheck, req.HostKeySHA256, req.TimeoutSec)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	st := s.sessionStore()
+	url := req.URL
+	if req.Kind == db.SessionSSH {
+		port := req.Port
+		if port <= 0 {
+			port = 22
+		}
+		url = fmt.Sprintf("ssh://%s@%s:%d", req.Username, strings.TrimSpace(req.Host), port)
+	}
 	rec := &db.SessionRecord{
 		TaskID: taskID, Kind: req.Kind, HostAssetID: req.HostAssetID,
-		CredentialID: req.CredentialID, URL: req.URL, Secret: string(secret),
+		CredentialID: req.CredentialID, URL: url, Secret: string(secret),
 		Lang: req.Lang, Status: db.SessionAlive, CreatedByTask: taskID,
 	}
 	id, err := st.Create(r.Context(), rec)
@@ -163,7 +180,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 
 // buildSessionSecret 按 kind 组装会话 secret JSON（与 agent 侧同逻辑；
 // 明文口令只在此处出现，调用方 Create 即加密落库；出参绝不回显）。
-func buildSessionSecret(kind, url, password, encoder, scriptType string, allowPlaintext bool, penSessionID int64) (json.RawMessage, error) {
+// ssh 的校验与组装走 session.BuildSSHSecret（与 agent 侧共用，只此一份）。
+func buildSessionSecret(kind, url, password, encoder, scriptType string, allowPlaintext bool, penSessionID int64,
+	host string, port int, username, privateKey, keyPassphrase, hostKeyCheck, hostKeySHA256 string, timeoutSec int) (json.RawMessage, error) {
 	switch kind {
 	case db.SessionHTTP, db.SessionHTTPJSP, db.SessionHTTPASPX:
 		if strings.TrimSpace(url) == "" {
@@ -190,7 +209,7 @@ func buildSessionSecret(kind, url, password, encoder, scriptType string, allowPl
 		b, _ := json.Marshal(map[string]any{"pen_session_id": penSessionID})
 		return b, nil
 	case db.SessionSSH:
-		return nil, fmt.Errorf("ssh 会话暂无驱动（仅登记无意义）：先用 http/reverse 立足点")
+		return session.BuildSSHSecret(host, port, username, password, privateKey, keyPassphrase, hostKeyCheck, hostKeySHA256, timeoutSec)
 	default:
 		return nil, fmt.Errorf("未知会话类型 %q", kind)
 	}
