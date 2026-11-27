@@ -89,18 +89,18 @@ type FindingDedupEvent struct {
 
 // FindingRegression is one row of finding_regressions (deterministic replay spec).
 type FindingRegression struct {
-	ID               int64      `json:"id,string"`
-	FindingID        int64      `json:"finding_id,string"`
-	BaselineTrafficID string    `json:"baseline_traffic_id,omitempty"`
-	ProofTrafficID   string     `json:"proof_traffic_id,omitempty"`
-	Method           string     `json:"method"`
-	URL              string     `json:"url"`
-	Assertion        string     `json:"assertion"` // token | diff | status
-	ExpectedStatus   int        `json:"expected_status"`
-	Token            string     `json:"token,omitempty"`
-	LastVerdict      string     `json:"last_verdict,omitempty"`
-	LastCheckedAt    *time.Time `json:"last_checked_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
+	ID                int64      `json:"id,string"`
+	FindingID         int64      `json:"finding_id,string"`
+	BaselineTrafficID string     `json:"baseline_traffic_id,omitempty"`
+	ProofTrafficID    string     `json:"proof_traffic_id,omitempty"`
+	Method            string     `json:"method"`
+	URL               string     `json:"url"`
+	Assertion         string     `json:"assertion"` // token | diff | status
+	ExpectedStatus    int        `json:"expected_status"`
+	Token             string     `json:"token,omitempty"`
+	LastVerdict       string     `json:"last_verdict,omitempty"`
+	LastCheckedAt     *time.Time `json:"last_checked_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 // AddFindingReview applies one review verdict to a finding and records it.

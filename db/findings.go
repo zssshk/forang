@@ -20,25 +20,25 @@ type DBFinding struct {
 	ReportEvidenceVersion int64
 	TrafficBindings       []FindingTrafficBinding // populated only for export
 
-	ID              int64
-	TaskID          *int64
-	NodeID          *int64
-	VulnClass       string
-	Name            string // 漏洞名称(可读标题);为空时前端回退展示 VulnClass
-	Severity        string
-	Summary         string
-	Evidence        string
-	Worker          string
+	ID        int64
+	TaskID    *int64
+	NodeID    *int64
+	VulnClass string
+	Name      string // 漏洞名称(可读标题);为空时前端回退展示 VulnClass
+	Severity  string
+	Summary   string
+	Evidence  string
+	Worker    string
 	// Packet 可复现 POC 的完整原始 HTTP 请求包（Repeater 直粘重放）；空=非 HTTP 类。
 	Packet   string
 	AssetIDs []int64
-	Status          string
-	Report          string // 详细报告(Markdown);仅 GetFinding 填充,列表查询不带
+	Status   string
+	Report   string // 详细报告(Markdown);仅 GetFinding 填充,列表查询不带
 	// v0.6.4 证据分级（Pojun L1–L4）：EvidenceLevel ""=未分级；Confidence low/medium/high；
 	// ReportExcluded：critical/high 且实测低于 L3，默认不进正式报告。
-	EvidenceLevel  string
-	Confidence     string
-	ReportExcluded bool
+	EvidenceLevel   string
+	Confidence      string
+	ReportExcluded  bool
 	CreatedAt       time.Time
 	TaskDescription string // populated via LEFT JOIN on tasks
 }

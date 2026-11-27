@@ -18,7 +18,7 @@ import (
 	"github.com/Autumn-27/artex/db"
 )
 
-func (s *Server) reviewFinding(w http.ResponseWriter, r *http.Request) {
+func (s *Server) submitFindingReview(w http.ResponseWriter, r *http.Request) {
 	pg := s.pg(w)
 	if pg == nil {
 		return

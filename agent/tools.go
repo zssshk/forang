@@ -1262,11 +1262,11 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 	return writeTool("report_finding", "记录确认的漏洞，用 evidence 提供命令输出、日志等可验证证据。任务上下文传当前 intent_id。返回的 finding_id 是独立漏洞记录 ID，finding_node_id 是探索节点 ID（第一行保留该节点编号）。", obj(map[string]any{
 		"vulnclass": str("漏洞类别"), "name": str("漏洞名称"), "severity": str("critical|high|medium|low"), "summary": str("发现摘要"),
 		"intent_id": idp("当前任务的意图 id"), "asset_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "受影响资产 id"},
-		"evidence":         str("证据/PoC 文本"),
-		"packet":           str("HTTP 类漏洞必填：完整原始 HTTP 请求包（可直粘 Repeater 重放）。格式：首行 'GET /path HTTP/1.1'，随后 Host 与各请求头，空一行接请求体。不要 curl 命令、不要 URL、不要描述文字。非 HTTP 漏洞（如源码审计/本地文件）省略"),
+		"evidence": str("证据/PoC 文本"),
+		"packet":   str("HTTP 类漏洞必填：完整原始 HTTP 请求包（可直粘 Repeater 重放）。格式：首行 'GET /path HTTP/1.1'，随后 Host 与各请求头，空一行接请求体。不要 curl 命令、不要 URL、不要描述文字。非 HTTP 漏洞（如源码审计/本地文件）省略"),
 		// v0.6.4 证据分级（Pojun L1–L4）：L1 线索/指纹、L2 行为异常、L3 可利用、L4 业务影响。
 		// 自报只作声明，生效等级 = min(自报, 实测)，自报高于实测时以实测为准；不填则全自动分级。
-		"evidence_level": map[string]any{"type": "string", "enum": []string{"L1", "L2", "L3", "L4"}, "description": "可选：自报证据等级。critical/high 须 L3+ 证据才进正式报告，低于 L3 的会被标注为未达交付标准。"},
+		"evidence_level":   map[string]any{"type": "string", "enum": []string{"L1", "L2", "L3", "L4"}, "description": "可选：自报证据等级。critical/high 须 L3+ 证据才进正式报告，低于 L3 的会被标注为未达交付标准。"},
 		"evidence_hint_id": idp("可选：本任务中对应此漏洞的提示节点 ID，自动携带其结构化 traffic_refs；不能引用继承提示或其他漏洞的提示"),
 		"traffic_refs": map[string]any{"type": "array", "description": "可选；HTTP/HTTPS 漏洞先检索并逐条核实请求/响应确实支持漏洞结论，再按复现顺序填写真实 ID。TCP 等非 HTTP 漏洞、未采集或找不到确切记录时省略或传 []，不阻止上报；可在 evidence 说明原因并提供其他可验证证据。不要猜测 ID、按域名/时间推定关联或仅为补包重复探测。用途 baseline 正常对照 / proof 漏洞证明 / verification 补充验证 / supporting 辅助证据。",
 			"items": obj(map[string]any{"traffic_id": str("traffic_search 返回的真实流量 ID"), "role": map[string]any{"type": "string", "enum": []string{"baseline", "proof", "verification", "supporting"}}, "note": str("该流量如何支持漏洞结论")}, "traffic_id")},
@@ -1274,12 +1274,12 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 	}, "vulnclass", "severity", "summary"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 		var a struct {
 			VulnClass, Name, Severity, Summary, Evidence, Packet string
-			EvidenceLevel                                        string             `json:"evidence_level"`
-			ForceRegister                                        bool               `json:"force_register"`
-			IntentID                                             json.RawMessage    `json:"intent_id"`
-			AssetIDs                                             []json.RawMessage  `json:"asset_ids"`
-			TrafficRefs                                          []db.TrafficRef    `json:"traffic_refs"`
-			EvidenceHintID                                       json.RawMessage    `json:"evidence_hint_id"`
+			EvidenceLevel                                        string            `json:"evidence_level"`
+			ForceRegister                                        bool              `json:"force_register"`
+			IntentID                                             json.RawMessage   `json:"intent_id"`
+			AssetIDs                                             []json.RawMessage `json:"asset_ids"`
+			TrafficRefs                                          []db.TrafficRef   `json:"traffic_refs"`
+			EvidenceHintID                                       json.RawMessage   `json:"evidence_hint_id"`
 		}
 		if err := json.Unmarshal(in, &a); err != nil {
 			return actool.Errorf(err.Error()), nil
@@ -1325,7 +1325,7 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 				// v0.6.4 质量闭环：复报被拦下也留一条去重记录（best-effort，记不上
 				// 不影响本次返回）；详情页「去重记录」可查被拦的复报。
 				if t.ts != nil {
-					if err := t.ts.RecordDedupEvent(dup.FindingID, dup.Fingerprint, t.taskID, in.VulnClass, in.Name); err != nil {
+					if err := t.ts.RecordDedupEvent(dup.FindingID, dup.Fingerprint, t.taskID, a.VulnClass, a.Name); err != nil {
 						slog.Warn("[dedup] dedup event not recorded", "err", err)
 					}
 				}
@@ -1386,7 +1386,7 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		// 这里明确告诉上报者，须复核确认或补充证据后才可交付。
 		if recorded.ReportExcluded {
 			gate := fmt.Sprintf("证据等级 %s（%s），%s 须 L3+ 证据才进正式报告：已标注为未达交付标准，须复核确认或补充证据后才可交付。",
-				recorded.EvidenceLevel, db.EvidenceLevelLabel(recorded.EvidenceLevel), recorded.Severity)
+				recorded.EvidenceLevel, db.EvidenceLevelLabel(recorded.EvidenceLevel), a.Severity)
 			if result.EvidenceNote != "" {
 				result.EvidenceNote += " " + gate
 			} else {

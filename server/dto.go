@@ -39,7 +39,7 @@ type TaskDTO struct {
 	PinnedAt           string             `json:"pinned_at,omitempty"`
 	Description        string             `json:"description"`
 	Goal               string             `json:"goal"`
-	Status             string             `json:"status"` // created | running | paused | done | failed
+	Status             string             `json:"status"`               // created | running | paused | done | failed
 	AuditMode          bool               `json:"audit_mode,omitempty"` // 源码审计任务（静态审计，工具面按任务收口）
 	CreatedAt          string             `json:"created_at"`
 	CreatedUnix        int64              `json:"created_unix"`       // created_at as unix seconds (for run-duration calc)
@@ -321,10 +321,10 @@ type FindingDTO struct {
 	EvidenceLevel  string `json:"evidence_level,omitempty"`
 	Confidence     string `json:"confidence,omitempty"`
 	ReportExcluded bool   `json:"report_excluded"`
-	Summary   string `json:"summary"`
-	Evidence  string `json:"evidence"`
-	Packet    string `json:"packet,omitempty"` // 可复现 POC：完整原始 HTTP 请求包（Repeater 直粘重放）；空=非 HTTP 类
-	Report    string `json:"report,omitempty"` // 详细报告(Markdown);仅详情接口返回,列表为空
+	Summary        string `json:"summary"`
+	Evidence       string `json:"evidence"`
+	Packet         string `json:"packet,omitempty"` // 可复现 POC：完整原始 HTTP 请求包（Repeater 直粘重放）；空=非 HTTP 类
+	Report         string `json:"report,omitempty"` // 详细报告(Markdown);仅详情接口返回,列表为空
 
 	IntentID        string            `json:"intent_id,omitempty"`
 	ParamID         string            `json:"param_id,omitempty"`
@@ -458,18 +458,18 @@ func findingFromDB(f *db.DBFinding, assets map[int64]*db.Asset) FindingDTO {
 		FindingID:    i64s(f.ID),
 		TrafficCount: f.TrafficCount, EvidenceVersion: f.EvidenceVersion, ReportEvidenceVersion: f.ReportEvidenceVersion,
 		ReportStale: f.Report != "" && f.EvidenceVersion != f.ReportEvidenceVersion, TrafficBindings: f.TrafficBindings,
-		VulnClass: f.VulnClass,
-		Name:      f.Name,
-		Severity:  f.Severity,
-		Status:    status,
+		VulnClass:      f.VulnClass,
+		Name:           f.Name,
+		Severity:       f.Severity,
+		Status:         status,
 		EvidenceLevel:  f.EvidenceLevel,
 		Confidence:     f.Confidence,
 		ReportExcluded: f.ReportExcluded,
-		Summary:   f.Summary,
-		Evidence:  f.Evidence,
-		Packet:    f.Packet,
-		Report:    f.Report,
-		TS:        rfc3339(f.CreatedAt),
+		Summary:        f.Summary,
+		Evidence:       f.Evidence,
+		Packet:         f.Packet,
+		Report:         f.Report,
+		TS:             rfc3339(f.CreatedAt),
 	}
 	d.Assets = findingAssetDTOs(f.AssetIDs, assets)
 	if f.TaskID != nil {
