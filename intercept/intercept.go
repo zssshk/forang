@@ -136,6 +136,9 @@ type Interceptor struct {
 	enabledTools map[string]bool // nil means not loaded yet
 	pending      *pendingManager
 	reviewer     Reviewer // nil = LLM fallback judge not wired
+	// OnPendingCreated 待审批创建回调（server 侧接 IM 推送：钉钉/飞书）。
+	// 异步调用、失败静默——通知不可用不能阻塞审批流。
+	OnPendingCreated func(pendingID int64, taskID string, agentName, toolName, reason string)
 }
 
 // SetReviewer installs the LLM fallback judge callback. Passing nil disables it.
@@ -444,6 +447,13 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 	if !cfg.Enabled || rv == nil {
 		return Decision{}, false
 	}
+	// 规则预筛：明显只读（或只写本地工作目录产物）的命令直接放行，不进模型。
+	// 开关 intercept.prefilter，白名单见 prefilter.go。
+	if i.db.GetBool(settingPrefilter, true) {
+		if ok, why := PrefilterDecision(ctx, tool, arguments); ok {
+			return Decision{Action: "allow", Message: "[预筛] " + why + "，免 AI 裁判"}, true
+		}
+	}
 
 	cctx := ctx
 	if cfg.TimeoutSeconds > 0 {
@@ -606,10 +616,21 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 	taskID, agentName := taskInfoFromCtx(ctx)
 	taskEmit := taskEmitFromCtx(ctx)
 
+	// 人工看到的内容要和裁判一致：命令里跑本地脚本时，把脚本体摘要并进审批说明。
+	if excerpt := ScriptExcerptFor(toolName, input); excerpt != "" {
+		dec.Message += excerpt
+	}
 	audit := auditFor(ctx, dec, input, "pending")
 	pendingID, err := i.db.CreateInterceptPending(ruleID, convID, taskID, agentName, toolName, input, dec.Message, audit)
 	if err != nil {
 		return false, nil
+	}
+
+	if i.OnPendingCreated != nil {
+		go func() {
+			defer func() { _ = recover() }() // 通知失败不影响审批
+			i.OnPendingCreated(pendingID, taskID, agentName, toolName, dec.Message)
+		}()
 	}
 
 	i.bindResult(ctx, pendingID, audit)
@@ -713,6 +734,7 @@ func (i *Interceptor) Decide(pendingID int64, allowed bool, edited json.RawMessa
 // WithTaskID / TaskIDFromContext 把当前任务 id 放进工具调用上下文：
 // guard 判定「清理任务」降级路径时读取（agent 侧注入，import 环避雷）。
 type taskIDKey struct{}
+
 func WithTaskID(ctx context.Context, taskID int64) context.Context {
 	return context.WithValue(ctx, taskIDKey{}, taskID)
 }
@@ -734,6 +756,7 @@ func CleanupFingerprintsFromContext(ctx context.Context) []string {
 	}
 	return nil
 }
+
 type cleanupFpKey struct{}
 
 // cleanupJudgeGuidance 追加到裁判提示词：清理上下文的归属判定规则。
@@ -759,7 +782,9 @@ func (i *Interceptor) PrefixAllowed(toolName string, input []byte) bool {
 	if err != nil || !ok || strings.TrimSpace(v) == "" {
 		return false
 	}
-	var args struct{ Command string `json:"command"` }
+	var args struct {
+		Command string `json:"command"`
+	}
 	if json.Unmarshal(input, &args) != nil || args.Command == "" {
 		return false
 	}

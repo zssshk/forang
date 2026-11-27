@@ -189,6 +189,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s.wireDoctrineResolver()                           // 指挥条令 doc:<id> 复用预设注入管道
 	workRoot = m.dir                                   // 容器同路径挂载的平台根
 	go s.cleanupOrphanContainers()                     // 启动清理无主任务容器
+	go s.startTunnelWatcher(s.ctx)                     // 公网入口变化时推飞书
 	s.startPocSubLoop()
 	s.startNotifyHealthLoop()      // 通知渠道健康巡检：每 6h 探测，死 webhook 不再静默丢推送
 	s.StartProxySubscriptionLoop() // 出口代理订阅轮询（未配置即静默）                            // POC 订阅定时同步（每分钟检查到期源）
@@ -385,6 +386,14 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	srv := s                                 // 号池闭包需要已构造的 s
 	m.SetTavilyPoolPicker(srv.pickTavilyKey) // Tavily 号池：余额最高优先
 	s.wireInterceptReviewer()                // LLM 兜底审批:未命中拦截规则的命令交给模型判定
+	s.wireScopeResolver()                    // 任务授权范围注入裁判(目标清单来自 DB)
+	// 待审批 IM 推送（体验优化：审批等人工时运维能第一时间知道）。
+	// 双通道：飞书自建应用卡片（按钮直答，首选）+ 通知中心（回链兜底）。
+	m.interceptor.OnPendingCreated = func(pendingID int64, taskID string, agentName, toolName, reason string) {
+		go s.sendApprovalCard(pendingID, taskID, agentName, toolName, reason)
+		s.enqueueApprovalEvent(pendingID, taskID, agentName, toolName, reason)
+	}
+	go s.StartFeishuWS(s.ctx) // 飞书长连接（卡片按钮审批；未配置时内部直接返回）
 	return s
 }
 
@@ -1201,6 +1210,7 @@ func (s *Server) Handler() http.Handler {
 	// Webhook 通知（钉钉/飞书）+ 高危漏洞推送
 	s.registerNotifyRoutes(mux)
 	s.registerGateRoutes(mux)      // 隐身入口
+	s.registerTunnelRoutes(mux)    // 公网入口（隧道）查看/重建/回链同步
 	s.registerDoctrineRoutes(mux)  // 指挥条令 CRUD
 	s.registerPluginRoutes(mux)    // 插件中心（zip 包→MCP 注册）
 	s.registerContainerRoutes(mux) // 任务容器化
@@ -1211,6 +1221,9 @@ func (s *Server) Handler() http.Handler {
 	api := cors(s.requireAuth(mux))
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
+	// approval-quick 必须挂在 root mux 直通：挂在 api mux 会被 webui SPA 兜底吞掉
+	// 返回前端 404 页（HMAC 免登录审批回链，路由本身自带鉴权）。
+	root.Handle("/approval-quick", http.HandlerFunc(s.serveApprovalQuick))
 	root.Handle("/debug/pprof/", s.requireAuth(http.DefaultServeMux)) // 诊断：goroutine 栈转储（真正过 gate+JWT；自测 1941 曾裸挂未授权）
 	root.Handle("/", s.webuiHandler())
 	return s.gateMiddleware(root)
@@ -3624,6 +3637,7 @@ func (s *Server) settingsPayload() map[string]any {
 		// 这里只放「作用于全部渠道」的三项。
 		"notify_enabled":             s.m.pg.GetBool(settingNotifyEnabled, true),
 		"notify_public_base_url":     notifyPublicBaseURL(s.m.pg),
+		"tunnel_auto_sync":           getSettingDefault(s.m.pg, "tunnel.auto_sync", "true") != "false",
 		"notify_digest_interval_min": notifyDigestIntervalMin(s.m.pg),
 	}
 }
@@ -3704,7 +3718,11 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 不需要重建 agent 或重启。
 		NotifyEnabled    *bool   `json:"notify_enabled"`
 		NotifyBaseURL    *string `json:"notify_public_base_url"`
+		TunnelAutoSync   *bool   `json:"tunnel_auto_sync"` // 隧道换域名自动同步回连地址
 		NotifyDigestMins *int    `json:"notify_digest_interval_min"`
+		// 飞书自建应用（长连接 + 审批卡片直答）。存 settings 键 feishu_app，
+		// JSON：app_id/app_secret/notify_user_ids；保存后由 feishu_ws 按需重连。
+		FeishuApp *string `json:"feishu_app"`
 		// 报告封面要素（机构署名/密级/文档编号前缀）。生成报告时读取；""=恢复默认。
 		ReportCoverOrg            *string `json:"report_cover_org"`
 		ReportCoverClassification *string `json:"report_cover_classification"`
@@ -3740,6 +3758,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.TunnelAutoSync != nil {
+		if err := s.m.pg.SetSetting("tunnel.auto_sync", boolStr(*req.TunnelAutoSync)); err != nil {
+			writeErr(w, 500, "自动同步开关保存失败: "+err.Error())
+			return
+		}
+	}
 	if req.NotifyBaseURL != nil {
 		// 统一裁掉尾部斜杠:回链拼接用的是 fmt.Sprintf("%s/function/..."),
 		// 留着尾部斜杠会产出 "//function/..." 这种双斜杠路径。
@@ -3750,6 +3774,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.m.pg.SetSetting(settingNotifyPublicBaseURL, base); err != nil {
 			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.FeishuApp != nil {
+		if err := s.m.pg.SetSetting("feishu_app", strings.TrimSpace(*req.FeishuApp)); err != nil {
+			writeErr(w, 500, "飞书应用配置保存失败: "+err.Error())
 			return
 		}
 	}

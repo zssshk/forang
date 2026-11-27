@@ -1,10 +1,10 @@
 "use client";
 
 // 平台集成设置卡（哨兵移植批次）：资产测绘（FOFA/Quake/Hunter）、Webhook 通知、
-// Tavily 号池、监督员策略、拦截前缀白名单。全部独立加载，互不阻塞。
+// Tavily 号池、拦截前缀白名单。全部独立加载，互不阻塞。
 import * as React from "react";
 
-import { FlaskConicalIcon, GlobeIcon, BellRingIcon, KeySquareIcon, EyeIcon, ShieldCheckIcon } from "lucide-react";
+import { FlaskConicalIcon, GlobeIcon, BellRingIcon, KeySquareIcon, ShieldCheckIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -13,12 +13,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
-import type { NotifyConfig, SurveyPlatform, TavilyKeyRow } from "@/lib/types";
+import type { SurveyPlatform, TavilyKeyRow } from "@/lib/types";
 
 const PLATFORMS: [string, string][] = [["fofa", "FOFA"], ["quake", "360 Quake"], ["hunter", "奇安信 Hunter"]];
-const STRATEGIES: [string, string][] = [
-  ["steady", "稳健交付"], ["validation", "漏洞验证"], ["offensive", "红队推进"], ["stealth", "低噪声"], ["guarded", "避危险接口"],
-];
 
 function SurveyCard() {
   const [cfg, setCfg] = React.useState<Record<string, SurveyPlatform>>({});
@@ -103,46 +100,24 @@ function SurveyCard() {
 }
 
 function NotifyCard() {
-  const [cfg, setCfg] = React.useState<NotifyConfig>({ dingtalk: { enabled: false, webhook: "", secret: "" }, feishu: { enabled: false, webhook: "", secret: "" } });
-  React.useEffect(() => { api.notifyConfig().then(setCfg).catch(() => undefined); }, []);
-  const save = () => api.notifySet(cfg).then(() => toast.success("已保存通知配置")).catch((e) => toast.error(e.message));
-  const test = () => api.notifyTest().then(() => toast.success("测试消息已发出")).catch((e) => toast.error(`发送失败：${e.message}`));
-
-  const row = (k: "dingtalk" | "feishu", label: string) => (
-    <div className="rounded-md border p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm font-medium">{label}</span>
-        <Switch checked={cfg[k].enabled} onCheckedChange={(v) => setCfg({ ...cfg, [k]: { ...cfg[k], enabled: v } })} />
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <div>
-          <Label className="text-xs">Webhook（https）</Label>
-          <Input value={cfg[k].webhook} onChange={(e) => setCfg({ ...cfg, [k]: { ...cfg[k], webhook: e.target.value } })} placeholder="https://oapi.dingtalk.com/robot/send?access_token=…" />
-        </div>
-        <div>
-          <Label className="text-xs">加签密钥（可选）</Label>
-          <Input type="password" value={cfg[k].secret} onChange={(e) => setCfg({ ...cfg, [k]: { ...cfg[k], secret: e.target.value } })} placeholder="SEC…" />
-        </div>
-      </div>
-    </div>
-  );
+  // 2026-11-23：旧版钉钉/飞书 webhook 配置已下线。它与新通知中心（/system/notify）
+  // 是两套并行系统，曾导致「在这里保存了 webhook 但测试/推送走的却是另一套」的
+  // 配置漂移事故。此卡改为入口引导；旧配置键 settings.notify.config 不再读取。
   return (
     <Card className="mb-4 break-inside-avoid md:mb-6">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base"><BellRingIcon className="size-4" />通知推送</CardTitle>
-        <CardDescription>评审确认的高危/严重漏洞自动推送（dubious 存疑不推）。钉钉加签 timestamp+sign、飞书签名均为 HMAC-SHA256。</CardDescription>
+        <CardDescription>高危漏洞评审确认、待审批操作等事件推送到钉钉 / 飞书 / 企业微信 / Telegram / 邮件</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {row("dingtalk", "钉钉机器人")}
-        {row("feishu", "飞书机器人")}
-        <div className="flex gap-2">
-          <Button size="sm" onClick={save}>保存</Button>
-          <Button size="sm" variant="outline" onClick={test}>发送测试</Button>
-        </div>
+      <CardContent>
+        <Button size="sm" onClick={() => (window.location.href = "/system/notify")}>
+          前往通知中心配置渠道
+        </Button>
       </CardContent>
     </Card>
   );
 }
+
 
 function TavilyPoolCard() {
   const [keys, setKeys] = React.useState<TavilyKeyRow[]>([]);
@@ -193,36 +168,6 @@ function TavilyPoolCard() {
   );
 }
 
-function SupervisorStrategyCard() {
-  const [strategy, setStrategy] = React.useState("steady");
-  const [cfg, setCfg] = React.useState<{ enabled: boolean; strategy: string; interval_sec: number; min_actions: number } | null>(null);
-  React.useEffect(() => {
-    fetch("/api/supervisor/config", { headers: authHeaders() }).then((r) => r.json()).then((d) => {
-      setStrategy(d.strategy ?? "steady");
-      setCfg(d);
-    }).catch(() => undefined);
-  }, []);
-  const save = (s: string) => {
-    setStrategy(s);
-    if (!cfg) return;
-    fetch("/api/supervisor/config", { method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ ...cfg, strategy: s }) })
-      .then(() => toast.success(`监督策略已切换：${s}`)).catch(() => toast.error("保存失败"));
-  };
-  return (
-    <Card className="mb-4 break-inside-avoid md:mb-6">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base"><EyeIcon className="size-4" />监督员策略</CardTitle>
-        <CardDescription>监督模式（第二个 LLM 旁观工具流）的作战策略：滚动维护「已测/已排除」，digest 脱敏后判定空转并注入建议。</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-wrap gap-2">
-        {STRATEGIES.map(([v, l]) => (
-          <Button key={v} size="sm" variant={strategy === v ? "default" : "outline"} onClick={() => save(v)} disabled={!cfg}>{l}</Button>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
 function PrefixCard() {
   const [v, setV] = React.useState("");
   React.useEffect(() => { api.interceptPrefixes().then((r) => setV(r.prefixes ?? "")).catch(() => undefined); }, []);
@@ -250,7 +195,6 @@ export function IntegrationsCards() {
   return (
     <>
       <SurveyCard />
-      <SupervisorStrategyCard />
       <NotifyCard />
       <TavilyPoolCard />
       <PrefixCard />

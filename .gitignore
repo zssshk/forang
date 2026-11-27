@@ -64,3 +64,6 @@ scripts/patch_*.py
 
 # 运维临时备份（KB 回滚产物等，不入库）
 /backups/
+# 构建产物 / 临时目录
+/server/webui/
+/out-stale-*/
