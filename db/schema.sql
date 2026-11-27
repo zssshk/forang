@@ -1872,3 +1872,53 @@ CREATE TABLE IF NOT EXISTS pending_scope (
     UNIQUE (task_id, kind, value)
 );
 CREATE INDEX IF NOT EXISTS idx_pending_scope_task ON pending_scope(task_id, status);
+
+-- =====================================================================
+-- v0.6.5 立足点会话子系统（artex-ymh 移植）：sessions / session_recon_reports /
+-- tunnel_deploy_attempts。secret 用 AES-GCM 加密（gcm1: 前缀，密钥由 jwt.key
+-- 经 SHA-256 域分离派生，域标签 artex/sessions/v1，与凭据库密钥隔离）。
+-- sessions.status 只记 alive/dead；失联（stale）由 last_beat 现算，不落库。
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS sessions (
+    id                BIGSERIAL PRIMARY KEY,
+    task_id           BIGINT NOT NULL DEFAULT 0,
+    kind              TEXT NOT NULL CHECK(kind IN ('http_php','http_jsp','http_aspx','reverse','ssh')),
+    host_asset_id     BIGINT NOT NULL DEFAULT 0,
+    credential_id     BIGINT NOT NULL DEFAULT 0,
+    url               TEXT NOT NULL DEFAULT '',
+    secret            TEXT NOT NULL DEFAULT '', -- gcm1:<base64> 密文，密钥由 jwt.key 派生
+    lang              TEXT NOT NULL DEFAULT '',
+    status            TEXT NOT NULL DEFAULT 'alive' CHECK(status IN ('alive','dead')),
+    created_by_task   BIGINT NOT NULL DEFAULT 0,
+    created_by_intent BIGINT NOT NULL DEFAULT 0,
+    last_beat         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_host ON sessions(host_asset_id);
+
+-- session_recon_reports：session_recon 每次被动侦察的结构化报告原文（JSONB），
+-- 供复核/回放/审计；资产落库与探索图 fact 另行记录，不依赖本表。
+CREATE TABLE IF NOT EXISTS session_recon_reports (
+    id         BIGSERIAL PRIMARY KEY,
+    task_id    BIGINT NOT NULL DEFAULT 0,
+    session_id BIGINT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    report     JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_session_recon_reports_session ON session_recon_reports(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_recon_reports_task ON session_recon_reports(task_id);
+
+-- tunnel_deploy_attempts：隧道远端投递每次尝试的留痕（成功/失败、经哪个会话、
+-- 用什么适配器、失败原因）；投递失败可据此重试，不静默丢失。
+CREATE TABLE IF NOT EXISTS tunnel_deploy_attempts (
+    id         BIGSERIAL PRIMARY KEY,
+    tunnel_id  BIGINT NOT NULL REFERENCES tunnels(id) ON DELETE CASCADE,
+    session_id BIGINT NOT NULL DEFAULT 0,
+    adapter    TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL DEFAULT 'failed' CHECK(status IN ('ok','failed')),
+    detail     TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tunnel_deploy_attempts_tunnel ON tunnel_deploy_attempts(tunnel_id);

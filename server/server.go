@@ -27,8 +27,10 @@ import (
 	"github.com/Autumn-27/artex/llmpool"
 	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/report"
+	"github.com/Autumn-27/artex/session"
 	"github.com/Autumn-27/artex/survey"
 	"github.com/Autumn-27/artex/traffic"
+	"github.com/Autumn-27/artex/tunnel"
 	"github.com/Autumn-27/artex/webshell"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
@@ -71,6 +73,10 @@ type Server struct {
 
 	skillDir string // root directory for skill subdirectories
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
+
+	sessRegistry *session.Registry       // 立足点会话进程内注册表（v0.6.5)
+	reverseMgr   *session.ReverseManager // 受管 penelope handler（v0.6.5)
+	tunnelMgr    *tunnel.Manager         // 隧道部署管理器（v0.6.5)
 
 	// concMu serializes concurrency-cap decisions (admission + reconcile) so a
 	// scheduler tick and an HTTP settings change / task creation can't both count
@@ -181,6 +187,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
 	s.surveySvc = survey.NewService(m.PG(), m.dir) // 资产测绘服务（evidence 落 <dir>/evidence/survey）
+	s.initSessionSubsystem()                       // 立足点会话子系统：注册表 + penelope handler + 隧道部署管理器（v0.6.5)
 	m.SetTavilyPoolPicker(nil)                     // 占位：New 返回后由 server 注入（避免构造期回环）
 	s.initSideQuestions()
 	s.supervisor.srv = s                               // 监督员借用 Server 的模型解析
@@ -864,6 +871,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tasks/{id}/pending-scope", s.createPendingScope)
 	mux.HandleFunc("POST /api/tasks/{id}/pending-scope/{sid}/decide", s.decidePendingScope)
 	mux.HandleFunc("POST /api/tasks/{id}/handoff", s.createHandoff)
+
+	// 立足点会话（v0.6.5)：登记/列表/详情/心跳/exec/read/write/删除 +
+	// reverse_listen 接管同步 + 侦察报告；隧道远端投递 + 投递尝试。
+	mux.HandleFunc("GET /api/tasks/{id}/sessions", s.listSessions)
+	mux.HandleFunc("POST /api/tasks/{id}/sessions", s.createSession)
+	mux.HandleFunc("GET /api/tasks/{id}/sessions/{sid}", s.getSession)
+	mux.HandleFunc("POST /api/tasks/{id}/sessions/{sid}/heartbeat", s.heartbeatSession)
+	mux.HandleFunc("POST /api/tasks/{id}/sessions/{sid}/exec", s.execSession)
+	mux.HandleFunc("POST /api/tasks/{id}/sessions/{sid}/read", s.readSessionFile)
+	mux.HandleFunc("POST /api/tasks/{id}/sessions/{sid}/write", s.writeSessionFile)
+	mux.HandleFunc("DELETE /api/tasks/{id}/sessions/{sid}", s.deleteSession)
+	mux.HandleFunc("GET /api/tasks/{id}/sessions/{sid}/recon", s.listSessionReconReports)
+	mux.HandleFunc("POST /api/tasks/{id}/reverse-listen", s.reverseListen)
+	mux.HandleFunc("POST /api/tasks/{id}/tunnels/{tid}/deploy", s.deployTunnel)
+	mux.HandleFunc("GET /api/tasks/{id}/tunnels/{tid}/attempts", s.listTunnelAttempts)
 
 	// 工作空间文件管理器（针对 workDir）
 	mux.HandleFunc("GET /api/workspace/list", s.wsList)

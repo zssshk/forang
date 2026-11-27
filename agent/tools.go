@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/session"
 	"github.com/Autumn-27/artex/survey"
+	"github.com/Autumn-27/artex/tunnel"
 	acperm "github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -54,14 +56,16 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 // One ToolSet is created per planner/worker run; per-run signals live here.
 type ToolSet struct {
 	findingRecorder FindingRecorder
-	as              *db.AssetStore    // asset store (optional; nil = asset tools not available)
-	cs              *db.CompanyStore  // company store (optional)
-	pocs            *db.PocStore      // POC 闭环 store (optional; nil = poc tools unavailable)
-	credKey         []byte            // 凭据库加密主钥（jwt.key 内容；nil = 凭据工具不可用）
-	vulns           *db.VulnStore     // 漏洞中枢 store (optional; nil = vuln tools unavailable)
-	surveySvc       *survey.Service   // 资产测绘 (optional; nil = survey tools unavailable)
-	apimodels       *db.ApiModelStore // 业务建模 (optional; nil = api_model tools unavailable)
-	droidDir        string            // droid 文件工具（截图/pull/push/install）的落盘目录 (optional)
+	as              *db.AssetStore          // asset store (optional; nil = asset tools not available)
+	cs              *db.CompanyStore        // company store (optional)
+	pocs            *db.PocStore            // POC 闭环 store (optional; nil = poc tools unavailable)
+	credKey         []byte                  // 凭据库加密主钥（jwt.key 内容；nil = 凭据工具不可用）
+	reverseMgr      *session.ReverseManager // 受管 penelope handler（nil = reverse 会话不可用）
+	tunnelMgr       *tunnel.Manager         // 隧道部署管理器（nil = tunnel_deploy 不可用）
+	vulns           *db.VulnStore           // 漏洞中枢 store (optional; nil = vuln tools unavailable)
+	surveySvc       *survey.Service         // 资产测绘 (optional; nil = survey tools unavailable)
+	apimodels       *db.ApiModelStore       // 业务建模 (optional; nil = api_model tools unavailable)
+	droidDir        string                  // droid 文件工具（截图/pull/push/install）的落盘目录 (optional)
 	ts              *db.ExplorationStore
 	worker          string
 	taskID          int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
@@ -2154,5 +2158,7 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		// 蜜罐识别（v0.6.3 ymh 移植）：honeypot_check 只读评估；suggest_credentials
 		// 凭据复用打分（只返元数据）；tunnel_plan 生成隧道计划并入账。
 		t.honeypotCheck(), t.suggestCredentials(), t.tunnelPlan(),
+		// 立足点会话（v0.6.5)：register_session 登记；reverse_listen 接管；tunnel_deploy 投递。
+		t.registerSession(), t.reverseListen(), t.tunnelDeploy(),
 	}
 }

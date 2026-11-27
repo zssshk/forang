@@ -7,8 +7,8 @@
 //     只返回元数据与得分，secret 永不返回给 LLM）。
 //   - tunnel_plan：生成一条隧道部署计划并记入台账（planner；选型走
 //     tunnel.SelectAdapter，计划序列化进 tunnels.deploy_params；
-//     远端投递依赖立足点会话子系统，FORANG 暂无，deploy 记为后续项，
-//     台账 state 保持 deploying 并在返回里写明）。
+//     远端投递走立足点会话子系统（v0.6.5 tunnel_deploy 工具），
+//     台账 state 保持 deploying 直到投递验证通过才标 alive）。
 package agent
 
 import (
@@ -200,12 +200,12 @@ func assetToReuseCandidate(a *db.Asset) *db.ReuseCandidate {
 // 选型：probe 驱动（tcp_out / webshell_url）→ tunnel.SelectAdapter；
 // 端口池：ARTEX_TUNNEL_PORT_RANGE（默认 20000-21000），已占端口从活隧道台账取；
 // 回连地址：ARTEX_CALLBACK_ADDR（无则报错，须在部署环境配好）。
-// 远端投递依赖立足点会话子系统（FORANG 暂无），计划只生成 + 入账（state=deploying），
+// 远端投递走立足点会话子系统（v0.6.5 tunnel_deploy 工具），计划只生成 + 入账（state=deploying），
 // Deploy 阶段诚实标记为后续项，不编一个假 alive。
 func (t *ToolSet) tunnelPlan() actool.CoreTool {
 	return writeTool(
 		"tunnel_plan",
-		"生成一条内网隧道部署计划并记入台账（选型 + 端口分配 + 计划持久化）。kind：socks（平台回环 socks5 入口）或 portfwd（单端口转发到内网目标）。选型规则：目标能 TCP 出网 → chisel；不能出网但有 webshell → suo5（仅 socks）；portfwd 强制 chisel。远端投递需立足点会话（FORANG 暂无），计划只生成 + 入账，deploy 为后续项。",
+		"生成一条内网隧道部署计划并记入台账（选型 + 端口分配 + 计划持久化）。kind：socks（平台回环 socks5 入口）或 portfwd（单端口转发到内网目标）。选型规则：目标能 TCP 出网 → chisel；不能出网但有 webshell → suo5（仅 socks）；portfwd 强制 chisel。远端投递走立足点会话（v0.6.5 tunnel_deploy 工具），计划只生成 + 入账。",
 		obj(map[string]any{
 			"kind":         str("隧道类型：socks 或 portfwd"),
 			"tcp_out":      str("目标能否直接 TCP 出网（true/false）"),
@@ -299,7 +299,7 @@ func (t *ToolSet) tunnelPlan() actool.CoreTool {
 				"tunnel_id": tunnelID, "adapter": adapter, "selection_reason": reason,
 				"listen": fmt.Sprintf("%s:%d", plan.ListenHost, plan.ListenPort),
 				"state":  db.TunnelDeploying,
-				"note":   "计划已生成并入账；远端投递需立足点会话子系统（FORANG 暂无），deploy 为后续项，当前 state 保持 deploying，不谎报 alive",
+				"note":   "计划已生成并入账；远端投递走 tunnel_deploy 工具（需立足点会话），当前 state 保持 deploying，不谎报 alive",
 			}
 			if a.Kind == tunnel.KindSocks {
 				out["socks_entry"] = fmt.Sprintf("socks5://127.0.0.1:%d", plan.SocksPort)

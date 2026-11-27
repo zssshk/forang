@@ -4,6 +4,45 @@
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-11-27
+
+### 立足点会话子系统（artex-ymh 移植，核心，前置）
+
+- **会话台账**：新增 `sessions` 表 + `db/sessions.go`（AES-GCM 加密落库，密钥由 jwt.key 经 SHA-256 域分离派生，域标签 `artex/sessions/v1`，与凭据库密钥隔离；密钥缺失时直接报错，绝不明文落库）+ 进程内 `session.Registry`（Add 覆盖旧会话时先 Close）；kind 五态 http_php/http_jsp/http_aspx/reverse/ssh，status 只记 alive/dead，失联（stale）由 `last_beat` 现算（StaleAfter 10 分钟），不落库。
+- **关联**：会话挂凭据（credential_id）、主机资产（host_asset_id）、隧道（tunnels.via_session_id）与内网拓扑；内网总览 `GET /api/tasks/{id}/intranet` 增 `sessions` 元数据。
+- **工具与接口**：`register_session`（planner，登记后立即 Test，不通记 dead 并如实返回）、`session_exec`/`session_read`/`session_write`（worker，每次使用 Touch 刷新心跳）；HTTP 层 `GET/POST /api/tasks/{id}/sessions`、`GET …/sessions/{sid}`、`POST …/{sid}/heartbeat|exec|read|write`、`DELETE …/{sid}`（列表与详情一律剥离 secret，只给元数据 + stale 标记）。
+
+### webshell 加密会话（PHP/JSP）
+
+- **`session/httpshell.go`**：基于 `webshell.Client` 的会话驱动；encoder 只接受 aes/xor，raw 明文须显式 `allow_plaintext=true` 才放行（缺省拒绝，失败降级明说、绝不静默走明文）；单行命令套随机哨兵取回输出（哨兵缺失即报错、不信输出），多行命令经 base64 临时文件执行；读文件走 webshell read，写文件 ≤200KB 单次 base64 写入、超大分块追加。
+- **内网页**：`/function/intranet` 新增「立足点会话」Tab：登记表单（kind/url/口令/编码器，口令只进加密库）+ 会话表（类型/地址/存活/失联/最后心跳 + 心跳/删除）。
+
+### penelope 反弹 shell
+
+- **`session/penelope.go` + `session/reverse.go`**：受管 penelope handler（`penelope.py --mcp`，本地 token 认证，默认只绑 127.0.0.1）+ MCP 桥（6 工具：list/get/exec/kill/upload/download；文件传输要求持久/PTY shell，否则如实报错）；`reverse_listen`（planner + HTTP `POST /api/tasks/{id}/reverse-listen`）启动/复用 handler 并把已连反弹会话同步登记为 reverse 类会话（去重，不重复登记）；Close 永不 kill 远端 shell（只驱逐注册表）；penelope 未配置时如实报错，不伪造就绪。
+
+### 立足点被动侦察 session_recon
+
+- **`recon/` 包 + `session_recon` 工具（worker）**：只读命令包（ip addr/ip route/arp -a//etc/hosts/netstat，目标无 ip/ss 自动回退 ifconfig/route -n/netstat），逐条执行、单条失败不中断整体；解析器 `ParseNICsAuto/ParseRoutesAuto/ParseNeighbors/ParseHosts/ParseConnTable` + 高价值推断 `Infer`（多网卡/静态路由/已证明对端/ARP 邻居）；发现的新 IP 登记 ip 资产、监听端口登记 service 资产，报告存 `session_recon_reports`（HTTP `GET …/sessions/{sid}/recon` 可查），推断 record_fact 进探索图，scope 外新网段按 /24 登记 pending_scope 等人工审批；不发任何探测包。
+
+### 隧道远端投递 deploy
+
+- **`tunnel/deploy.go` + `tunnel/suo5.go` + `tunnel/socks5.go`**：chisel 部署四层（平台起 server，authfile 0600、auth 不进命令行 → 会话分块写入客户端二进制并 chmod+x → 远端 setsid+nohup 拉起、AUTH 走 env、哨兵取 pid → 隧道内决定性验证：经 socks5 真实拨测 verify_addr/自环，或 portfwd 预检 + 入口拨测，通才标 alive）；suo5 部署四层（随机名 payload 经会话写入 webshell 同目录 → 平台直连探 payload URL 非 404 → 起 suo5 CLI（--auth 必启用）→ 经 socks 带 auth CONNECT webshell 宿主验证）；任一失败逐层回滚（杀远端/平台进程、删远端文件与 authfile），台账行保留、state=error。
+- **留痕与重试**：新增 `tunnel_deploy_attempts` 表（每次尝试都记，成功与失败同记）+ `db.TunnelStore.RecordDeployAttempt/ListDeployAttempts`；`tunnel_deploy` 工具（planner）与 HTTP `POST /api/tasks/{id}/tunnels/{tid}/deploy` 只对 deploying/error 的台账行部署（error 即重试）；内网页隧道表新增「部署」按钮，`GET …/tunnels/{tid}/attempts` 可查尝试记录。
+- **与 v0.6.3 的差异**：参考实现用 stage 一次性 URL 投递客户端二进制，本仓库无 stage 服务，deliver 直接走 session.WriteFile（内部 200KB 分块），慢但不依赖额外服务。
+
+### 工程
+
+- **`artex doctor`**：新增 v0.6.5 检查（sessions / session_recon_reports / tunnel_deploy_attempts 三表 + tunnels.via_session_id 列，缺失只警告，与 v0.6.3/v0.6.4 同口径）。
+- **迁移**：`db/schema.sql` 全部 `IF NOT EXISTS`，随启动自动执行；`tunnel_plan` 与内网作战页的「deploy 为后续项」备注已更新为 v0.6.5 实现。
+- **测试**：session/recon/tunnel/db/agent/cmd 单测本地全过，主二进制本地构建通过，前端 tsc 通过；server PG 测试本地缺 ARTEX_PG_DSN 无法跑（部署机跑）。
+
+### 遗留（后续项，未装进本版）
+
+- ssh 会话只有登记位、无驱动（register_session 明确拒绝，须先用 http/reverse 立足点）。
+- penelope 的 spawn 路径按 ymh 笔记的 CLI 旗标（`--mcp --port <port> --token <token>`）拉起，未在真机上实测过拉起；已配现成 MCP 端点（ARTEX_PENELOPE_MCP_URL）是主路径。
+- 隧道投递与 session_recon 均无真实立足点实测：验证止于单测 + 路由级 + 桩会话，见部署验证记录。
+
 ## [0.6.4] - 2026-11-27
 
 ### 证据分级（Pojun 移植，核心）

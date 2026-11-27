@@ -345,10 +345,24 @@ export interface PendingScope {
   decided_at?: string;
 }
 
+export interface SessionMeta {
+  id: number;
+  task_id: number;
+  kind: string;
+  host_asset_id?: number;
+  credential_id?: number;
+  url?: string;
+  lang?: string;
+  status: string;
+  last_beat: string;
+  stale: boolean;
+}
+
 export interface IntranetOverview {
   task_id: number;
   credentials?: CredentialMeta[];
   tunnels?: TunnelRecord[];
+  sessions?: SessionMeta[];
   pending_scope?: PendingScope[];
   honeypot_assets?: { id: number; label: string; score: number; evidence: string }[];
   topology?: {

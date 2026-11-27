@@ -84,6 +84,7 @@ import type {
   PromptVar,
   PromptVersion,
   SessionTokenUsage,
+  SessionMeta,
   Settings,
   Severity,
   SkillCall,
@@ -432,6 +433,21 @@ export const api = {
     post<TunnelPlanResult>(`/tasks/${id}/tunnels/plan`, body),
   updateTunnelState: (id: string, tid: number, state: string, error?: string) =>
     post<{ tunnel_id: number; state: string }>(`/tasks/${id}/tunnels/${tid}/state`, { state, error: error ?? "" }),
+  deployTunnel: (id: string, tid: number, sessionId?: number) =>
+    post<{ tunnel_id: number; state: string; adapter: string; entry: string }>(
+      `/tasks/${id}/tunnels/${tid}/deploy`, { session_id: sessionId ?? 0 }),
+  listTunnelAttempts: (id: string, tid: number) =>
+    get<{ attempts: { id: number; adapter: string; status: string; detail: string; created_at: string }[] }>(
+      `/tasks/${id}/tunnels/${tid}/attempts`),
+  // ---- 立足点会话（v0.6.5)----
+  createSession: (id: string, body: { kind: string; url?: string; password?: string; encoder?: string; script_type?: string; allow_plaintext?: boolean; pen_session_id?: number; host_asset_id?: number; credential_id?: number; lang?: string }) =>
+    post<{ session: SessionMeta; tested?: boolean; error?: string }>(`/tasks/${id}/sessions`, body),
+  heartbeatSession: (id: string, sid: number) =>
+    post<{ session: SessionMeta }>(`/tasks/${id}/sessions/${sid}/heartbeat`, {}),
+  deleteSession: (id: string, sid: number) => del<{ deleted: boolean }>(`/tasks/${id}/sessions/${sid}`),
+  reverseListen: (id: string, port?: number) =>
+    post<{ listening: boolean; port: number; penelope_sessions: number; synced_new: number[] }>(
+      `/tasks/${id}/reverse-listen`, { port: port ?? 4444 }),
   listPendingScope: (id: string, all = false) =>
     get<{ pending_scope: PendingScope[] | null }>(`/tasks/${id}/pending-scope${all ? "?all=1" : ""}`).then((r) => ({
       pending_scope: arr(r.pending_scope),

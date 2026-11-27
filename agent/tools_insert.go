@@ -665,6 +665,8 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		// 把侦察所得凭据加密入库；suggest_credentials 凭据复用打分（只返元数据）；
 		// report_pending_scope 登记 scope 外网段（人工批准后才扩范围）。
 		t.honeypotCheck(), t.registerCredential(), t.suggestCredentials(), t.reportPendingScope(),
+		// 立足点会话（v0.6.5)：session_exec/read/write 用会话执行与读写；session_recon 被动侦察。
+		t.sessionExec(), t.sessionRead(), t.sessionWrite(), t.sessionRecon(),
 		// 跨 work 回看：worker 也可复用其他 work 的观察，避免重复劳动。
 		// search_all_worker_traces：不必先知道 intent_id，按关键字全局捞命中步骤；
 		// get_worker_trace：锁定某条 work 后列步骤/就地搜/取完整内容。

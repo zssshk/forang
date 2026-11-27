@@ -10,6 +10,8 @@ import (
 
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
+	"github.com/Autumn-27/artex/session"
+	"github.com/Autumn-27/artex/tunnel"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
@@ -45,6 +47,8 @@ type Planner struct {
 	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor         *Compactor                             // cold-node compaction (§7); nil = disabled
 	credKey           []byte                                 // 凭据库加密主钥（jwt.key；nil = 凭据工具不可用）
+	reverseMgr        *session.ReverseManager                // 受管 penelope handler（nil = reverse 会话不可用）
+	tunnelMgr         *tunnel.Manager                        // 隧道部署管理器（nil = tunnel_deploy 不可用）
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -104,6 +108,12 @@ func (p *Planner) SetPreset(id string) { p.presetID = id }
 // SetCredentialKey wires the credential-store master key (jwt.key content) so
 // the planner's ToolSet can offer the credential tools. nil = unavailable.
 func (p *Planner) SetCredentialKey(key []byte) { p.credKey = key }
+
+// SetReverseManager wires the managed penelope handler so the planner's ToolSet can offer reverse_listen. nil = unavailable.
+func (p *Planner) SetReverseManager(m *session.ReverseManager) { p.reverseMgr = m }
+
+// SetTunnelManager wires the tunnel deploy manager so the planner's ToolSet can offer tunnel_deploy. nil = unavailable.
+func (p *Planner) SetTunnelManager(m *tunnel.Manager) { p.tunnelMgr = m }
 
 // SetWebSearch selects the web_search backend for the planner (off by default).
 func (p *Planner) SetWebSearch(o WebSearchOpts) { p.webSearch = o }
@@ -374,6 +384,8 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	tsx := NewToolSet(ts, "planner")
 	tsx.SetFindingRecorder(p.findingRecorder)
 	tsx.SetCredentialKey(p.credKey)
+	tsx.SetReverseManager(p.reverseMgr)
+	tsx.SetTunnelManager(p.tunnelMgr)
 	if as != nil {
 		tsx.SetAssetStore(as, as.Companies())
 	}

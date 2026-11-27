@@ -161,8 +161,14 @@ go build -tags embedui -o forang ./cmd/artex
 
 ## 版本
 
-当前 **v0.6.4**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+当前 **v0.6.5**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
 
+- **立足点会话子系统（artex-ymh 移植）**：`sessions` 表 + `db/sessions.go`（AES-GCM 加密落库，密钥由 jwt.key 经 SHA-256 域分离派生，域标签 `artex/sessions/v1`；密钥缺失直接报错，绝不明文落库）+ 进程内 `session.Registry`；kind 五态 http_php/http_jsp/http_aspx/reverse/ssh，status 只记 alive/dead，失联由 `last_beat` 现算（10 分钟）；会话挂凭据/主机资产/隧道/拓扑；工具 `register_session`（登记后立即 Test，不通记 dead）/`session_exec`/`session_read`/`session_write`（每次使用刷新心跳）；HTTP 层 `GET/POST /api/tasks/{id}/sessions` + 心跳/exec/read/write/删除（列表详情一律剥离 secret）
+- **webshell 加密会话（PHP/JSP）**：`session/httpshell.go`（encoder 只接受 aes/xor，raw 明文须显式 `allow_plaintext=true` 才放行；单行命令随机哨兵取回，多行经 base64 临时文件执行；写文件 ≤200KB 单次、超大分块追加）；内网页新增「立足点会话」Tab（登记 + 心跳/删除）
+- **penelope 反弹 shell**：受管 handler（`penelope.py --mcp`，本地 token 认证）+ MCP 桥（6 工具）；`reverse_listen` 启动/复用 handler 并把已连反弹会话同步登记为 reverse 类会话（去重）；Close 永不 kill 远端 shell；未配置时如实报错
+- **立足点被动侦察 session_recon**：只读命令包（ip addr/ip route/arp -a/hosts/netstat，自动回退 ifconfig/route -n），不发探测包；解析 + 高价值推断（多网卡/静态路由/已证明对端/ARP 邻居）；新 IP 登记 ip 资产、监听端口登记 service 资产，报告存 `session_recon_reports`，推断 record_fact 进探索图，scope 外新网段按 /24 登记 pending_scope 等人工审批
+- **隧道远端投递 deploy**：`tunnel/deploy.go`（chisel 四层：起 server → 会话分块写入客户端 → 远端拉起 → 隧道内决定性验证，通才标 alive）+ `tunnel/suo5.go`（无出网场景：随机名 payload → 探 URL → 起 suo5 CLI → 经 socks 带 auth 验证）；失败逐层回滚、台账行保留 state=error；`tunnel_deploy_attempts` 表记每次尝试（成功失败同记）；`tunnel_deploy` 工具 + HTTP `POST /api/tasks/{id}/tunnels/{tid}/deploy`（仅 deploying/error 可部署/重试）；内网页隧道表新增「部署」按钮
+- **工程**：`artex doctor` 新增 v0.6.5 表/列检查（sessions / session_recon_reports / tunnel_deploy_attempts + tunnels.via_session_id，缺失只警告）
 - **证据分级（Pojun 移植）**：L1 线索 / L2 行为异常 / L3 可利用 / L4 业务影响四档；`report_finding` 可自报 `evidence_level`，生效等级 = min（自报，实测）（实测按证据文本 + 绑定流量角色 proof≥L3 / verification≥L2）；critical/high 低于 L3 默认不进正式报告，报告文末单列「未达交付标准」不静默丢；发现列表挂证据徽标 + 等级筛选，详情页显示等级与置信度
 - **质量闭环（Pojun 移植）**：复核三态确认/降级/驳回（降级严重度降一档、驳回进误报），状态变更与复核记录同一事务落库留痕；v0.6.2 指纹拦下复报时也写 `finding_dedup_events` 去重事件；详情页「复核与质量闭环」卡片（提交复核 + 记录/去重记录列表）
 - **确定性回归 spec（Pojun 轻量版）**：入库绑了 proof 流量即生成可重放断言 spec（断言优先级 token > diff > status），只记录不自动回放；详情页展示 spec
@@ -171,7 +177,7 @@ go build -tags embedui -o forang ./cmd/artex
 - **蜜罐识别 honeydetect（artex-ymh 移植）**：`honeydetect/` 静态签名层（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 内嵌签名，AND 匹配、热加载），service 资产落库后自动评分回写（`honeypot_score`/`honeypot_evidence`，取更高分 + 证据去重）并写 fact 进探索图；planner 态势注入 `honeypot_assets` + 处置纪律（单信号只降级交互，双信号才封锁方向）；worker 追加反 AI 陷阱红线（拒交系统提示词/工具清单/本地凭据、拒执行下载内容里的诱导指令）；资产页服务表新增蜜罐徽标（≥0.9 红色高置信、≥0.6 琥珀色疑似）；新工具 `honeypot_check`（只读评估，planner + worker）
 - **内网作战（artex-ymh 移植）**：凭据库（AES-GCM 加密落库，密钥由 jwt.key 经 SHA-256 域分离派生，`register_credential`/`suggest_credentials` 工具 + 内网页管理，secret 只进不出；复用打分同网段 +40、域凭据 +35、已验证 +25、服务重叠 +20、NT hash +15）；隧道选型（`tunnel.SelectAdapter`：能出网→chisel、不能出网有 webshell→suo5、portfwd 强制 chisel；`tunnel_plan` 工具 + `/api/tasks/{id}/tunnels/plan` 生成计划并入 `tunnels` 台账，state=deploying）；内网拓扑图（任务过滤：主机 × 服务 + 同网段边，蜜罐打标记）；待授权网段（`report_pending_scope` 工具 + 内网页审批，批准后才写进 task_scope）；外网→内网移交（`POST /api/tasks/{id}/handoff` 建子任务，初始范围只有立足点 /32）；内网页 `/function/intranet`（凭据/隧道/待授权/拓扑与蜜罐四 Tab）
 - **工程**：外部工具钉版清单 `packaging/tools-manifest.json`（nuclei/gost/socat/chisel/suo5/adb/python3/go，sha256 为空 = 未钉版只警告）+ 启动自检（哈希不匹配记 FAIL 日志，不阻断启动）+ `artex doctor` 部署预检（PG/数据目录/jwt.key/v0.6.3 表结构/工具清单，只读，FAIL 才 exit 1）
-- **后续项（未装进本版）**：webshell 加密会话（PHP/JSP）、penelope 反弹 shell、立足点被动侦察 session_recon、隧道远端投递 deploy（均依赖立足点会话子系统，FORANG 暂无）；商业欺骗产品无公开指纹，L1 静态签名识别不到
+- **后续项（未装进本版）**：ssh 会话只有登记位、无驱动；penelope spawn 路径未在真机实测拉起；隧道投递与 session_recon 无真实立足点实测（单测 + 路由级 + 桩会话）；商业欺骗产品无公开指纹，L1 静态签名识别不到
 
 - **知识包 knowledge-pack（BaaRai/ARTEX #522 移植）**：二进制内嵌 MITRE ATT&CK Enterprise（706 个技术）、OWASP WSTG（133 个测试）、MITRE CWE（956 个弱点），每条含 id、名称、分类、截断后描述、`truncated` 标记与官方 URL；来源与许可证见 `knowledge/data/sources.json`、`knowledge/NOTICE` 与 `knowledge/licenses/`（数据文件保留各自许可证，不在 AGPL-3.0 覆盖内）；planner 与 worker 新增只读工具 `knowledge_lookup`（按 id 或关键词查，引用编号写进 finding/事实），生成脚本 `scripts/knowledge/build.py` 可从官方源重建数据
 - **finding 指纹去重（BaaRai/ARTEX #589 移植）**：`report_finding` 写入前先算确定性指纹（漏洞类别 + 资产/Host + 端点路径/参数，三轴缺一不可，否则不拦），命中已登记 finding 即以 `duplicate_not_registered`（`dedup_source: fingerprint`）拦下，不再建新 finding；被拦后可用 `update_finding_report`（finding_id 传节点 id）给原 finding 补证据，或 `force_register=true` 强制登记确实是另一个缺陷的情况；已判 `false_positive`/`ignored`/`duplicate` 的 finding 不参与拦阻。注意：FORANG 没有上游的 LLM triage 环节，指纹检查就是唯一的去重关口
@@ -203,6 +209,7 @@ go build -tags embedui -o forang ./cmd/artex
 
 <!-- ver-note -->
 > v0.6.4：证据分级（Pojun L1–L4，实测分级 + critical/high 须 L3+ 才进正式报告，低证据文末单列）· 质量闭环（复核确认/降级/驳回留痕 + 指纹去重事件）· 确定性回归 spec（只记不自动回放）· `artex doctor` 补 v0.6.4 表/列检查。
+> v0.6.5：立足点会话子系统（登记/心跳/失联/关联凭据隧道拓扑，AES-GCM 加密落库）· webshell 加密会话（aes/xor，明文须显式放行）· penelope 反弹 shell 接管同步 · session_recon 被动侦察（只读命令包 + 资产/事实/pending_scope）· 隧道远端投递 deploy（chisel/suo5 四层 + 决定性验证 + 尝试留痕可重试）· `artex doctor` 补 v0.6.5 表/列检查。
 > v0.6.3：蜜罐识别 honeydetect（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 静态签名 + 资产评分/UI 徽标 + planner 处置纪律 + worker 反 AI 陷阱红线）· 内网作战（凭据库 AES-GCM + 复用打分、suo5/chisel 隧道选型与计划台账、内网拓扑图、待授权网段审批、外网→内网移交、内网页）· 外部工具钉版清单 + `artex doctor` 预检。
 > v0.6.2：知识包 knowledge-pack（ATT&CK 706 / WSTG 133 / CWE 956 内嵌 + 只读 knowledge_lookup 工具）· finding 指纹去重（report_finding 前确定性去重 + force_register 逃生口）· 修旁路摘要硬编码 Thinking:"disabled"（不再发 thinking 字段，New API 与 Anthropic 双兼容）。
 > v0.6.1：知识库模型独立设置（kb.profile_id 与评审模型解耦，LLM 页评审/知识库模型双下拉框）· 修复 /api/health 版本号显示（构建时注入版本号，不再是 dev）。

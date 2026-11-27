@@ -10,6 +10,8 @@
 //     assets.honeypot_score 列（缺失只警告——首次启动时 schema 还没跑）；
 //  5. v0.6.4 证据分级/质量闭环表结构：finding_reviews / finding_dedup_events /
 //     finding_regressions 表与 findings.evidence_level 等列（同上，只警告）；
+//  6. v0.6.5 立足点会话表结构：sessions / session_recon_reports /
+//     tunnel_deploy_attempts 表与 tunnels.via_session_id 列（同上，只警告）；
 //  5. 外部工具钉版清单（packaging/tools-manifest.json）：存在且哈希匹配为 OK，
 //     未钉版/找不到只警告，哈希不匹配才 FAIL。
 //
@@ -102,6 +104,11 @@ func runDoctor(args []string) int {
 					{"findings.evidence_level 列", "SELECT 1 FROM information_schema.columns WHERE table_name='findings' AND column_name='evidence_level'"},
 					{"findings.confidence 列", "SELECT 1 FROM information_schema.columns WHERE table_name='findings' AND column_name='confidence'"},
 					{"findings.report_excluded 列", "SELECT 1 FROM information_schema.columns WHERE table_name='findings' AND column_name='report_excluded'"},
+					// v0.6.5 立足点会话表结构。
+					{"sessions 表", "SELECT 1 FROM information_schema.tables WHERE table_name='sessions'"},
+					{"session_recon_reports 表", "SELECT 1 FROM information_schema.tables WHERE table_name='session_recon_reports'"},
+					{"tunnel_deploy_attempts 表", "SELECT 1 FROM information_schema.tables WHERE table_name='tunnel_deploy_attempts'"},
+					{"tunnels.via_session_id 列", "SELECT 1 FROM information_schema.columns WHERE table_name='tunnels' AND column_name='via_session_id'"},
 				} {
 					var one int
 					if err := sqldb.QueryRowContext(ctx, q.sql).Scan(&one); err != nil {

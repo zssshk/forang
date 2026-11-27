@@ -171,3 +171,42 @@ func (s *TunnelStore) Delete(ctx context.Context, id int64) error {
 	_, err := s.d.ExecContext(ctx, `DELETE FROM tunnels WHERE id=$1`, id)
 	return err
 }
+
+// DeployAttempt 是 tunnel_deploy_attempts 表的一行：每次投递尝试留痕
+// （成功与失败都记；失败行是重试与审计的依据，v0.6.5)。
+type DeployAttempt struct {
+	ID        int64     `json:"id"`
+	TunnelID  int64     `json:"tunnel_id"`
+	SessionID int64     `json:"session_id,omitempty"`
+	Adapter   string    `json:"adapter"`
+	Status    string    `json:"status"` // ok | failed
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RecordDeployAttempt 记一条投递尝试。
+func (s *TunnelStore) RecordDeployAttempt(ctx context.Context, tunnelID, sessionID int64, adapter, status, detail string) error {
+	_, err := s.d.ExecContext(ctx,
+		`INSERT INTO tunnel_deploy_attempts (tunnel_id, session_id, adapter, status, detail) VALUES ($1,$2,$3,$4,$5)`,
+		tunnelID, nilIfZero(sessionID), adapter, status, detail)
+	return err
+}
+
+// ListDeployAttempts 按时间倒序取某隧道的投递尝试（最新在前）。
+func (s *TunnelStore) ListDeployAttempts(ctx context.Context, tunnelID int64) ([]*DeployAttempt, error) {
+	rows, err := s.d.QueryContext(ctx,
+		`SELECT id, tunnel_id, COALESCE(session_id,0), adapter, status, COALESCE(detail,''), created_at FROM tunnel_deploy_attempts WHERE tunnel_id=$1 ORDER BY id DESC`, tunnelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*DeployAttempt{}
+	for rows.Next() {
+		a := &DeployAttempt{}
+		if err := rows.Scan(&a.ID, &a.TunnelID, &a.SessionID, &a.Adapter, &a.Status, &a.Detail, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}

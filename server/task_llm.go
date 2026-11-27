@@ -564,6 +564,8 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk := agent.NewWorker(workerRuntime, "task-router", s.m.dir, tx, window, s.agentMaxTurns("worker"))
 	wk.SetFindingRecorder(s.evidenceStore())
 	wk.SetCredentialKey(s.jwtKey) // 凭据库加密主钥（jwt.key；worker 的凭据工具用）
+	wk.SetReverseManager(s.reverseMgr)
+	wk.SetTunnelManager(s.tunnelMgr)
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)
 	wk.SetNonStreaming(workerRuntime.nonStreaming) // 按任务当前激活 profile 的流式开关(每轮读)
 	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上,输出上限也跟随当前激活 profile
@@ -577,6 +579,8 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
 	pl.SetPreset(t.Preset)
 	pl.SetCredentialKey(s.jwtKey) // 凭据库加密主钥（jwt.key；planner 的凭据工具用）
+	pl.SetReverseManager(s.reverseMgr)
+	pl.SetTunnelManager(s.tunnelMgr)
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
 	pl.SetNonStreaming(plannerRuntime.nonStreaming)

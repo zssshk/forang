@@ -1,9 +1,10 @@
 "use client";
 
-// 内网作战（v0.6.3 artex-ymh 移植）：凭据库 / 隧道台账 / 待授权网段 / 拓扑与蜜罐。
+// 内网作战（v0.6.3 artex-ymh 移植，v0.6.5 补立足点会话）：凭据库 / 隧道台账 /
+// 待授权网段 / 拓扑与蜜罐 / 立足点会话。
 // 凭据 secret 只进不出：列表只给元数据；新建走加密入库；删除/验证走接口。
-// 隧道只做计划生成 + 入账（state=deploying）；远端投递需立足点会话（FORANG
-// 暂无），deploy 为后续项——页面不提供「一键部署」假按钮。
+// 会话 secret 同理只进不出。隧道投递走立足点会话（deploy 按钮），只有决定性
+// 验证通过才标 alive。
 
 import * as React from "react";
 
@@ -58,6 +59,7 @@ export default function IntranetPage() {
 
   const creds = ov?.credentials ?? [];
   const tunnels = ov?.tunnels ?? [];
+  const sessions = ov?.sessions ?? [];
   const pending = ov?.pending_scope ?? [];
   const honeypots = ov?.honeypot_assets ?? [];
   const topo = ov?.topology;
@@ -67,7 +69,7 @@ export default function IntranetPage() {
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
           <h1 className="font-semibold text-xl">内网作战</h1>
-          <p className="text-muted-foreground text-sm">凭据库 · 隧道台账 · 待授权网段 · 拓扑与蜜罐（v0.6.3 ymh 移植）</p>
+          <p className="text-muted-foreground text-sm">凭据库 · 隧道台账 · 待授权网段 · 拓扑与蜜罐 · 立足点会话（v0.6.5)</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Label htmlFor="intranet-task">任务</Label>
@@ -96,6 +98,7 @@ export default function IntranetPage() {
           <TabsList>
             <TabsTrigger value="credentials">凭据库（{creds.length}）</TabsTrigger>
             <TabsTrigger value="tunnels">隧道（{tunnels.length}）</TabsTrigger>
+            <TabsTrigger value="sessions">立足点会话（{sessions.length}）</TabsTrigger>
             <TabsTrigger value="pending">待授权网段（{pending.filter((p) => p.status === "pending").length}）</TabsTrigger>
             <TabsTrigger value="topology">拓扑与蜜罐（{honeypots.length}）</TabsTrigger>
           </TabsList>
@@ -105,6 +108,9 @@ export default function IntranetPage() {
           </TabsContent>
           <TabsContent value="tunnels" className="mt-4">
             <TunnelPanel taskId={taskId} tunnels={tunnels} onReload={() => void load(taskId)} />
+          </TabsContent>
+          <TabsContent value="sessions" className="mt-4">
+            <SessionPanel taskId={taskId} sessions={sessions} onReload={() => void load(taskId)} />
           </TabsContent>
           <TabsContent value="pending" className="mt-4">
             <PendingPanel taskId={taskId} pending={pending} onReload={() => void load(taskId)} />
@@ -239,7 +245,7 @@ function TunnelPanel({ taskId, tunnels, onReload }: {
   return (
     <div className="flex flex-col gap-4">
       <Card>
-        <CardHeader><CardTitle className="text-base">生成隧道计划（选型 + 端口分配 + 入账；远端投递为后续项）</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">生成隧道计划（选型 + 端口分配 + 入账；投递走下方「部署」按钮，需立足点会话）</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap items-end gap-3">
           <div className="grid gap-1"><Label>类型</Label>
             <Select value={kind} onValueChange={setKind}>
@@ -286,6 +292,7 @@ function TunnelPanel({ taskId, tunnels, onReload }: {
                     {t.error && <div className="max-w-[12rem] truncate text-[11px] text-destructive" title={t.error}>{t.error}</div>}
                   </TableCell>
                   <TableCell className="flex gap-1">
+                    <Button variant="ghost" size="sm" disabled={t.state !== "deploying" && t.state !== "error"} onClick={() => void api.deployTunnel(taskId, t.id).then((r) => { toast.success(`隧道 #${r.tunnel_id} 已部署（${r.state}，入口 ${r.entry}）`); onReload(); }).catch((e: unknown) => { toast.error(`部署失败：${e instanceof Error ? e.message : String(e)}`); onReload(); })}>部署</Button>
                     <Button variant="ghost" size="sm" disabled={t.state === "alive"} onClick={() => void api.updateTunnelState(taskId, t.id, "alive").then(onReload).catch((e: unknown) => toast.error(String(e)))}>标 alive</Button>
                     <Button variant="ghost" size="sm" disabled={t.state === "stopped"} onClick={() => void api.updateTunnelState(taskId, t.id, "stopped").then(onReload).catch((e: unknown) => toast.error(String(e)))}>停用</Button>
                   </TableCell>
@@ -432,6 +439,138 @@ function TopologyPanel({ ov }: { ov: IntranetOverview | null }) {
               <div className="text-xs text-muted-foreground">边 {edges.length} 条（主机→服务 runs，同网段 same_segment）。完整关系图后续接可视化组件。</div>
             </>
           )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function SessionStatusBadge({ status, stale }: { status: string; stale: boolean }) {
+  let label = "存活";
+  if (status !== "alive") {
+    label = "已死";
+  } else if (stale) {
+    label = "失联";
+  }
+  const variant = status === "alive" && !stale ? "default" : "destructive";
+  return (
+    <Badge variant={variant} className="font-mono text-[10px]">
+      {label}
+    </Badge>
+  );
+}
+
+function SessionPanel({ taskId, sessions, onReload }: {
+  taskId: string;
+  sessions: NonNullable<IntranetOverview["sessions"]>;
+  onReload: () => void;
+}) {
+  const [kind, setKind] = React.useState("http_php");
+  const [url, setUrl] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [encoder, setEncoder] = React.useState("aes");
+  const [busy, setBusy] = React.useState(false);
+  const [reversePort, setReversePort] = React.useState("4444");
+  const [reverseBusy, setReverseBusy] = React.useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await api.createSession(taskId, {
+        kind, url: url.trim() || undefined, password: password || undefined,
+        encoder, script_type: undefined,
+      });
+      if (r.error) {
+        toast.error(`会话已登记但未连通：${r.error}`);
+      } else {
+        toast.success(`会话 #${r.session.id} 已登记并连通`);
+      }
+      setPassword("");
+      onReload();
+    } catch (e) {
+      toast.error(`登记失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const listen = async () => {
+    setReverseBusy(true);
+    try {
+      const r = await api.reverseListen(taskId, Number(reversePort) || 4444);
+      toast.success(`penelope 接管端已起（:${r.port}），已连会话 ${r.penelope_sessions} 个，新同步 ${r.synced_new.length} 个`);
+      onReload();
+    } catch (e) {
+      toast.error(`接管失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setReverseBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader><CardTitle className="text-base">登记立足点会话（webshell 加密通道；口令只进加密库，不回显）</CardTitle></CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-3">
+          <div className="grid gap-1"><Label>类型</Label>
+            <Select value={kind} onValueChange={setKind}>
+              <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="http_php">http_php</SelectItem>
+                <SelectItem value="http_jsp">http_jsp</SelectItem>
+                <SelectItem value="http_aspx">http_aspx</SelectItem>
+                <SelectItem value="reverse">reverse</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {kind !== "reverse" && (
+            <>
+              <div className="grid gap-1"><Label>Webshell URL</Label><Input value={url} onChange={(e) => setUrl(e.target.value)} className="w-64" placeholder="http://10.0.0.5/shell.php" /></div>
+              <div className="grid gap-1"><Label>口令</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-40" /></div>
+              <div className="grid gap-1"><Label>编码器</Label>
+                <Select value={encoder} onValueChange={setEncoder}>
+                  <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="aes">aes</SelectItem><SelectItem value="xor">xor</SelectItem></SelectContent>
+                </Select>
+              </div>
+            </>
+          )}
+          <Button onClick={() => void submit()} disabled={busy || (kind !== "reverse" && (!url.trim() || !password))}>登记并测试</Button>
+        </CardContent>
+        <CardContent className="flex flex-wrap items-end gap-3 pt-0">
+          <div className="grid gap-1"><Label>penelope 接管端口</Label><Input value={reversePort} onChange={(e) => setReversePort(e.target.value)} className="w-24" inputMode="numeric" /></div>
+          <Button variant="outline" onClick={() => void listen()} disabled={reverseBusy}>启动 reverse_listen 并同步会话</Button>
+          <span className="text-xs text-muted-foreground">reverse 类会话须先在此接管同步；明文通道（raw）不在页面提供。</span>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="pt-4">
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>ID</TableHead><TableHead>类型</TableHead><TableHead>地址</TableHead>
+              <TableHead>状态</TableHead><TableHead>最后心跳</TableHead><TableHead>操作</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {sessions.length === 0 ? (
+                <TableRow><TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">暂无立足点会话。</TableCell></TableRow>
+              ) : sessions.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="font-mono text-xs">{s.id}</TableCell>
+                  <TableCell><Badge variant="secondary" className="font-mono text-[10px]">{s.kind}</Badge></TableCell>
+                  <TableCell className="max-w-[16rem] truncate font-mono text-xs" title={s.url}>{s.url || "—"}</TableCell>
+                  <TableCell>
+                    <SessionStatusBadge status={s.status} stale={s.stale} />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{s.last_beat ? new Date(s.last_beat).toLocaleString() : "—"}</TableCell>
+                  <TableCell className="flex gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => void api.heartbeatSession(taskId, s.id).then(onReload).catch((e: unknown) => toast.error(String(e)))}>心跳</Button>
+                    <Button variant="ghost" size="sm" onClick={() => void api.deleteSession(taskId, s.id).then(onReload).catch((e: unknown) => toast.error(String(e)))}>删除</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <p className="mt-3 text-xs text-muted-foreground">失联 = 超过 10 分钟无心跳（由 last_beat 现算，不落库）。会话是 webshell 加密通道、penelope 接管、被动侦察与隧道投递的载体。</p>
         </CardContent>
       </Card>
     </div>

@@ -12,7 +12,9 @@ import (
 
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
+	"github.com/Autumn-27/artex/session"
 	"github.com/Autumn-27/artex/survey"
+	"github.com/Autumn-27/artex/tunnel"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
@@ -58,15 +60,17 @@ type Worker struct {
 	model           string
 	workDir         string
 	proxyAddr       string
-	presetID        string            // 三端预设 Agent: 方法论提示词注入(不改工具权限)
-	proxyCACert     string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
-	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
-	surveySvc       *survey.Service   // 资产测绘服务 (optional)
-	credKey         []byte            // 凭据库加密主钥（jwt.key；nil = 凭据工具不可用）
-	tx              *transcript.Store // raw LLM conversation persistence (nil = off)
-	window          int               // context window in tokens (for compaction)
-	windowFn        func() int        // optional dynamic task-chain minimum
-	maxTurns        int               // max agent turns per run (0 = unlimited)
+	presetID        string                  // 三端预设 Agent: 方法论提示词注入(不改工具权限)
+	proxyCACert     string                  // recording proxy's CA cert path (for WebFetch HTTPS verify)
+	webSearch       WebSearchOpts           // web_search tool backend selection (off by default)
+	surveySvc       *survey.Service         // 资产测绘服务 (optional)
+	credKey         []byte                  // 凭据库加密主钥（jwt.key；nil = 凭据工具不可用）
+	reverseMgr      *session.ReverseManager // 受管 penelope handler（nil = reverse 会话不可用）
+	tunnelMgr       *tunnel.Manager         // 隧道部署管理器（nil = tunnel_deploy 不可用）
+	tx              *transcript.Store       // raw LLM conversation persistence (nil = off)
+	window          int                     // context window in tokens (for compaction)
+	windowFn        func() int              // optional dynamic task-chain minimum
+	maxTurns        int                     // max agent turns per run (0 = unlimited)
 	// runTimeout is the wall-clock budget for the main exploration of one intent
 	// (0 = unlimited). When it fires, the run is cut and a settlement round is
 	// forced so already-identified facts get written back instead of being lost.
@@ -198,6 +202,12 @@ func (w *Worker) SetPreset(id string) { w.presetID = id }
 // SetCredentialKey wires the credential-store master key (jwt.key content) so
 // the worker's ToolSet can offer the credential tools. nil = unavailable.
 func (w *Worker) SetCredentialKey(key []byte) { w.credKey = key }
+
+// SetReverseManager wires the managed penelope handler so the worker's ToolSet can use reverse sessions. nil = unavailable.
+func (w *Worker) SetReverseManager(m *session.ReverseManager) { w.reverseMgr = m }
+
+// SetTunnelManager wires the tunnel deploy manager. nil = unavailable.
+func (w *Worker) SetTunnelManager(m *tunnel.Manager) { w.tunnelMgr = m }
 
 // SetWebSearch selects the web_search backend for this worker (off by default).
 func (w *Worker) SetWebSearch(o WebSearchOpts) { w.webSearch = o }
@@ -393,6 +403,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	tsx := NewToolSet(ts, name)
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetCredentialKey(w.credKey)
+	tsx.SetReverseManager(w.reverseMgr)
+	tsx.SetTunnelManager(w.tunnelMgr)
 	tsx.SetTaskID(taskID)
 	coverageEnabled := as == nil || as.CoverageEnabled(taskID)
 	tsx.SetCoverageEnabled(coverageEnabled)

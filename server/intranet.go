@@ -4,8 +4,9 @@
 //
 // 安全边界：凭据 secret 只进不出——列表与详情一律剥离 Secret 字段；入库走
 // AES-GCM（密钥由 jwt.key 派生），未配密钥时创建接口直接 503，绝不明文落库。
-// 隧道 plan 只生成 + 入账（state=deploying）；远端投递需立足点会话子系统，
-// FORANG 暂无，deploy 为后续项，不谎报 alive。
+// 隧道 plan 只生成 + 入账（state=deploying）；远端投递走立足点会话子系统
+// （v0.6.5：POST /api/tasks/{id}/tunnels/{tid}/deploy），只有决定性验证
+// 通过才标 alive，不谎报。
 package server
 
 import (
@@ -75,6 +76,13 @@ func (s *Server) intranetOverview(w http.ResponseWriter, r *http.Request) {
 	tun := db.NewTunnelStore(s.m.PG())
 	if rows, err := tun.ListByTask(ctx, taskID); err == nil {
 		out["tunnels"] = rows
+	}
+	if rows, err := s.sessionStore().ListByTask(ctx, taskID, ""); err == nil {
+		meta := make([]map[string]any, 0, len(rows))
+		for _, c := range rows {
+			meta = append(meta, stripSessionSecret(c))
+		}
+		out["sessions"] = meta
 	}
 	if rows, err := as.ListPendingScope(taskID, true); err == nil {
 		out["pending_scope"] = rows
@@ -283,7 +291,7 @@ func (s *Server) listTunnels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tunnels": rows})
 }
 
-// createTunnelPlan 生成一条隧道计划并入账（state=deploying；deploy 为后续项）。
+// createTunnelPlan 生成一条隧道计划并入账（state=deploying；投递走 tunnel_deploy 接口，见 server/tunnel_deploy.go）。
 func (s *Server) createTunnelPlan(w http.ResponseWriter, r *http.Request) {
 	_, _, taskID, ok := s.intranetTask(w, r)
 	if !ok {
@@ -370,7 +378,7 @@ func (s *Server) createTunnelPlan(w http.ResponseWriter, r *http.Request) {
 		"tunnel_id": tunnelID, "adapter": adapter, "selection_reason": reason,
 		"listen": fmt.Sprintf("%s:%d", plan.ListenHost, plan.ListenPort),
 		"state":  db.TunnelDeploying,
-		"note":   "计划已生成并入账；远端投递需立足点会话子系统（FORANG 暂无），deploy 为后续项，当前 state 保持 deploying，不谎报 alive",
+		"note":   "计划已生成并入账；远端投递走 tunnel_deploy 接口（需立足点会话），当前 state 保持 deploying，不谎报 alive",
 	}
 	if req.Kind == tunnel.KindSocks {
 		out["socks_entry"] = fmt.Sprintf("socks5://127.0.0.1:%d", plan.SocksPort)
