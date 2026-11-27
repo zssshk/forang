@@ -22,6 +22,7 @@ func TestFindingReviewFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.DeleteTask(tk.ID)
+	defer d.DeleteFindingsByTask(tk.ID)
 	es := d.Exploration(tk.ExplorationID)
 	nodeID, err := es.AddNode(KindFinding, map[string]any{"summary": "x", "severity": "critical"}, 5, "confirmed", "worker", nil)
 	if err != nil {
@@ -40,7 +41,13 @@ func TestFindingReviewFlow(t *testing.T) {
 	if rev.PrevSeverity != "critical" || rev.NewSeverity != "high" || rev.NewStatus != "confirmed" {
 		t.Fatalf("downgrade = %+v", rev)
 	}
-	f, _ := d.GetFinding(fid)
+	f, err := d.GetFinding(fid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f == nil {
+		t.Fatal("finding not found after review")
+	}
 	if f.Severity != "high" || f.Status != "confirmed" {
 		t.Fatalf("after downgrade: severity=%s status=%s", f.Severity, f.Status)
 	}
@@ -100,6 +107,7 @@ func TestFindingRegressionSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.DeleteTask(tk.ID)
+	defer d.DeleteFindingsByTask(tk.ID)
 	es := d.Exploration(tk.ExplorationID)
 	nodeID, err := es.AddNode(KindFinding, map[string]any{"summary": "x", "severity": "high"}, 5, "confirmed", "worker", nil)
 	if err != nil {
@@ -188,6 +196,7 @@ func TestFindingGradeWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.DeleteTask(tk.ID)
+	defer d.DeleteFindingsByTask(tk.ID)
 	es := d.Exploration(tk.ExplorationID)
 
 	low, err := es.RecordFinding(ctx, RecordFindingInput{
@@ -200,7 +209,13 @@ func TestFindingGradeWrite(t *testing.T) {
 	if low.EvidenceLevel != "L1" || !low.ReportExcluded {
 		t.Fatalf("low-evidence high finding: %+v", low)
 	}
-	f, _ := d.GetFinding(low.FindingID)
+	f, err := d.GetFinding(low.FindingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f == nil {
+		t.Fatal("finding not found after grading")
+	}
 	if f.EvidenceLevel != "L1" || f.Confidence != "low" || !f.ReportExcluded {
 		t.Fatalf("stored grade: %+v", f)
 	}
