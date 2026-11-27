@@ -73,6 +73,34 @@ const METHOD_COLOR: Record<string, string> = {
   OPTIONS: "bg-slate-100 text-slate-600",
 };
 
+// 蜜罐徽标（v0.6.3）：L1 静态签名命中分 ≥0.9 高置信、≥0.6 疑似；无信号不显示。
+function HoneypotBadge({ score, evidence }: { score?: number; evidence?: string }) {
+  const s = score ?? 0;
+  if (s <= 0) return <span className="text-xs text-muted-foreground">—</span>;
+  const high = s >= 0.9;
+  let title = `蜜罐评分 ${s.toFixed(2)}`;
+  try {
+    const ev = JSON.parse(evidence ?? "[]") as string[];
+    if (ev.length > 0) title += "：\n" + ev.join("\n");
+  } catch {
+    if (evidence) title += "：" + evidence;
+  }
+  return (
+    <Badge
+      variant="outline"
+      title={title}
+      className={cn(
+        "whitespace-nowrap font-mono text-[10px]",
+        high
+          ? "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+          : "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300",
+      )}
+    >
+      {high ? "蜜罐" : "疑似蜜罐"} {s.toFixed(2)}
+    </Badge>
+  );
+}
+
 function MethodBadge({ method }: { method: string }) {
   const m = method.toUpperCase();
   return (
@@ -590,7 +618,7 @@ export default function AssetsPage() {
         <TabsContent value="service" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
           {searchBox}
           <AssetCard
-            cols={["", "服务", "域名", "IP", "端口", "状态码", "标题", "指纹", "认证", ""]}
+            cols={["", "服务", "蜜罐", "域名", "IP", "端口", "状态码", "标题", "指纹", "认证", ""]}
             loaded={loaded}
             total={total}
             page={page}
@@ -628,6 +656,9 @@ export default function AssetsPage() {
                     <Badge variant={isHttp ? "default" : "secondary"} className="font-mono text-[10px]">
                       {svc || "—"}
                     </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <HoneypotBadge score={a.honeypot_score} evidence={a.honeypot_evidence} />
                   </TableCell>
                   <TableCell className="max-w-[14rem] truncate font-mono text-xs" title={a.domain || a.url}>
                     {domainCell}

@@ -563,11 +563,12 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	window := workerRuntime.CompactionWindow()
 	wk := agent.NewWorker(workerRuntime, "task-router", s.m.dir, tx, window, s.agentMaxTurns("worker"))
 	wk.SetFindingRecorder(s.evidenceStore())
+	wk.SetCredentialKey(s.jwtKey) // 凭据库加密主钥（jwt.key；worker 的凭据工具用）
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)
 	wk.SetNonStreaming(workerRuntime.nonStreaming) // 按任务当前激活 profile 的流式开关(每轮读)
 	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上,输出上限也跟随当前激活 profile
 	wk.SetNoaEnabled(s.m.NoaCompactionEnabled)     // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
-	wk.SetSurveyService(s.surveySvc)            // 资产测绘(FOFA/Quake/Hunter)
+	wk.SetSurveyService(s.surveySvc)               // 资产测绘(FOFA/Quake/Hunter)
 	wk.SetRunTimeout(time.Duration(s.agentRunSeconds("worker")) * time.Second)
 	wk.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	wk.SetWebSearch(s.webSearchFor("worker"))
@@ -575,6 +576,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetPreset(t.Preset)                           // 三端预设 Agent: 方法论注入(不改工具权限)
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
 	pl.SetPreset(t.Preset)
+	pl.SetCredentialKey(s.jwtKey) // 凭据库加密主钥（jwt.key；planner 的凭据工具用）
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
 	pl.SetNonStreaming(plannerRuntime.nonStreaming)

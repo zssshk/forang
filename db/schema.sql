@@ -1755,3 +1755,61 @@ CREATE TABLE IF NOT EXISTS c2_graph_edges (
     edge_type TEXT NOT NULL DEFAULT 'executed' -- executed/discovered/moved/escalated/ai_suggested
 );
 CREATE INDEX IF NOT EXISTS idx_c2ge_session ON c2_graph_edges(session_id);
+
+-- =====================================================================
+-- v0.6.3 artex-ymh 内网/蜜罐移植：凭据库 / 隧道台账 / 待授权网段 / 蜜罐评分
+-- =====================================================================
+-- honeypot_score: 0-1，命中静态签名的最高置信度（0=无信号）；重复评估取更高分。
+-- honeypot_evidence: 命中签名证据，JSON 数组文本，合并去重。
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS honeypot_score REAL NOT NULL DEFAULT 0;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS honeypot_evidence TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS credentials (
+    id            BIGSERIAL PRIMARY KEY,
+    task_id       BIGINT NOT NULL,
+    host_asset_id BIGINT,
+    username      TEXT NOT NULL DEFAULT '',
+    cred_type     TEXT NOT NULL CHECK(cred_type IN
+        ('password','hash_nt','hash_lm','hash_sha1','ticket','ssh_key','token')),
+    secret        TEXT NOT NULL DEFAULT '', -- gcm1:<base64> 密文，密钥由 jwt.key 派生
+    domain        TEXT NOT NULL DEFAULT '',
+    source        TEXT NOT NULL DEFAULT '',
+    verified      BOOLEAN NOT NULL DEFAULT false,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_credentials_task ON credentials(task_id);
+
+CREATE TABLE IF NOT EXISTS tunnels (
+    id             BIGSERIAL PRIMARY KEY,
+    task_id        BIGINT NOT NULL DEFAULT 0,
+    kind           TEXT NOT NULL CHECK(kind IN ('socks','portfwd')),
+    adapter        TEXT NOT NULL DEFAULT 'chisel',
+    listen_host    TEXT NOT NULL DEFAULT '',
+    listen_port    INT  NOT NULL DEFAULT 0,
+    target_host    TEXT NOT NULL DEFAULT '',
+    target_port    INT  NOT NULL DEFAULT 0,
+    via_session_id BIGINT NOT NULL DEFAULT 0, -- 立足点会话 id；FORANG 暂无 session 子系统，恒为 0
+    remote_pid     INT  NOT NULL DEFAULT 0,
+    deploy_params  JSONB NOT NULL DEFAULT '{}',
+    state          TEXT NOT NULL DEFAULT 'deploying'
+                   CHECK(state IN ('deploying','alive','error','stopped')),
+    last_check     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    error          TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tunnels_task ON tunnels(task_id);
+CREATE INDEX IF NOT EXISTS idx_tunnels_state ON tunnels(state);
+
+CREATE TABLE IF NOT EXISTS pending_scope (
+    id          BIGSERIAL PRIMARY KEY,
+    task_id     BIGINT NOT NULL,
+    kind        TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','dismissed')),
+    hits        INT NOT NULL DEFAULT 1,
+    first_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at  TIMESTAMPTZ,
+    UNIQUE (task_id, kind, value)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_scope_task ON pending_scope(task_id, status);

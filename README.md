@@ -161,7 +161,12 @@ go build -tags embedui -o forang ./cmd/artex
 
 ## 版本
 
-当前 **v0.6.2**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+当前 **v0.6.3**（2026-11-27，见 [Releases](https://github.com/F0ran9/forang/releases)）。近期重点：
+
+- **蜜罐识别 honeydetect（artex-ymh 移植）**：`honeydetect/` 静态签名层（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 内嵌签名，AND 匹配、热加载），service 资产落库后自动评分回写（`honeypot_score`/`honeypot_evidence`，取更高分 + 证据去重）并写 fact 进探索图；planner 态势注入 `honeypot_assets` + 处置纪律（单信号只降级交互，双信号才封锁方向）；worker 追加反 AI 陷阱红线（拒交系统提示词/工具清单/本地凭据、拒执行下载内容里的诱导指令）；资产页服务表新增蜜罐徽标（≥0.9 红色高置信、≥0.6 琥珀色疑似）；新工具 `honeypot_check`（只读评估，planner + worker）
+- **内网作战（artex-ymh 移植）**：凭据库（AES-GCM 加密落库，密钥由 jwt.key 经 SHA-256 域分离派生，`register_credential`/`suggest_credentials` 工具 + 内网页管理，secret 只进不出；复用打分同网段 +40、域凭据 +35、已验证 +25、服务重叠 +20、NT hash +15）；隧道选型（`tunnel.SelectAdapter`：能出网→chisel、不能出网有 webshell→suo5、portfwd 强制 chisel；`tunnel_plan` 工具 + `/api/tasks/{id}/tunnels/plan` 生成计划并入 `tunnels` 台账，state=deploying）；内网拓扑图（任务过滤：主机 × 服务 + 同网段边，蜜罐打标记）；待授权网段（`report_pending_scope` 工具 + 内网页审批，批准后才写进 task_scope）；外网→内网移交（`POST /api/tasks/{id}/handoff` 建子任务，初始范围只有立足点 /32）；内网页 `/function/intranet`（凭据/隧道/待授权/拓扑与蜜罐四 Tab）
+- **工程**：外部工具钉版清单 `packaging/tools-manifest.json`（nuclei/gost/socat/chisel/suo5/adb/python3/go，sha256 为空 = 未钉版只警告）+ 启动自检（哈希不匹配记 FAIL 日志，不阻断启动）+ `artex doctor` 部署预检（PG/数据目录/jwt.key/v0.6.3 表结构/工具清单，只读，FAIL 才 exit 1）
+- **后续项（未装进本版）**：webshell 加密会话（PHP/JSP）、penelope 反弹 shell、立足点被动侦察 session_recon、隧道远端投递 deploy（均依赖立足点会话子系统，FORANG 暂无）；商业欺骗产品无公开指纹，L1 静态签名识别不到
 
 - **知识包 knowledge-pack（BaaRai/ARTEX #522 移植）**：二进制内嵌 MITRE ATT&CK Enterprise（706 个技术）、OWASP WSTG（133 个测试）、MITRE CWE（956 个弱点），每条含 id、名称、分类、截断后描述、`truncated` 标记与官方 URL；来源与许可证见 `knowledge/data/sources.json`、`knowledge/NOTICE` 与 `knowledge/licenses/`（数据文件保留各自许可证，不在 AGPL-3.0 覆盖内）；planner 与 worker 新增只读工具 `knowledge_lookup`（按 id 或关键词查，引用编号写进 finding/事实），生成脚本 `scripts/knowledge/build.py` 可从官方源重建数据
 - **finding 指纹去重（BaaRai/ARTEX #589 移植）**：`report_finding` 写入前先算确定性指纹（漏洞类别 + 资产/Host + 端点路径/参数，三轴缺一不可，否则不拦），命中已登记 finding 即以 `duplicate_not_registered`（`dedup_source: fingerprint`）拦下，不再建新 finding；被拦后可用 `update_finding_report`（finding_id 传节点 id）给原 finding 补证据，或 `force_register=true` 强制登记确实是另一个缺陷的情况；已判 `false_positive`/`ignored`/`duplicate` 的 finding 不参与拦阻。注意：FORANG 没有上游的 LLM triage 环节，指纹检查就是唯一的去重关口
@@ -192,6 +197,7 @@ go build -tags embedui -o forang ./cmd/artex
 - 许可证：AGPL-3.0（见 LICENSE）。
 
 <!-- ver-note -->
+> v0.6.3：蜜罐识别 honeydetect（Cowrie/OpenCanary/Kippo/Glastopf/HFish/Dionaea 静态签名 + 资产评分/UI 徽标 + planner 处置纪律 + worker 反 AI 陷阱红线）· 内网作战（凭据库 AES-GCM + 复用打分、suo5/chisel 隧道选型与计划台账、内网拓扑图、待授权网段审批、外网→内网移交、内网页）· 外部工具钉版清单 + `artex doctor` 预检。
 > v0.6.2：知识包 knowledge-pack（ATT&CK 706 / WSTG 133 / CWE 956 内嵌 + 只读 knowledge_lookup 工具）· finding 指纹去重（report_finding 前确定性去重 + force_register 逃生口）· 修旁路摘要硬编码 Thinking:"disabled"（不再发 thinking 字段，New API 与 Anthropic 双兼容）。
 > v0.6.1：知识库模型独立设置（kb.profile_id 与评审模型解耦，LLM 页评审/知识库模型双下拉框）· 修复 /api/health 版本号显示（构建时注入版本号，不再是 dev）。
 > v0.6.0：emp3r0r 第二 C2 后端（bridge/MCP 融合，Classic 控制台全量覆盖）· 面板弹药库（exploits 投送 / 选择器 v2 / PoC 联动）· 免杀投放器 · MCP 运营面 · KB 蒸馏 · 每日 PoC 同步。

@@ -255,6 +255,9 @@ export interface Asset {
   method?: string;
   params?: Record<string, unknown>[];
   extra?: Record<string, unknown>;
+  // 蜜罐评分（v0.6.3）：L1 静态签名命中分（0=无信号）与证据 JSON 文本。
+  honeypot_score?: number;
+  honeypot_evidence?: string;
   last_seen: string;
   task_source?: string;
   task_source_summary?: string;
@@ -271,6 +274,87 @@ export interface IntentAsset {
   source_node_id?: number;
   source_task_id: number;
   inherited: boolean;
+}
+
+// ---- 内网作战（v0.6.3 ymh 移植）----
+
+export interface CredentialMeta {
+  id: number;
+  task_id: number;
+  host_asset_id?: number;
+  username: string;
+  cred_type: string;
+  domain?: string;
+  source: string;
+  verified: boolean;
+  created_at: string;
+}
+
+export interface CredentialCreateInput {
+  username: string;
+  cred_type: string;
+  secret: string;
+  domain?: string;
+  source: string;
+  host_asset_id?: number;
+}
+
+export interface TunnelRecord {
+  id: number;
+  task_id: number;
+  kind: string;
+  adapter: string;
+  listen_host: string;
+  listen_port: number;
+  target_host?: string;
+  target_port?: number;
+  state: string;
+  error?: string;
+  created_at: string;
+}
+
+export interface TunnelPlanInput {
+  kind: string;
+  tcp_out: boolean;
+  webshell_url?: string;
+  target_host?: string;
+  target_port?: number;
+  verify_addr?: string;
+}
+
+export interface TunnelPlanResult {
+  tunnel_id: number;
+  adapter: string;
+  selection_reason: string;
+  listen: string;
+  state: string;
+  socks_entry?: string;
+  local_entry?: string;
+  note: string;
+}
+
+export interface PendingScope {
+  id: number;
+  task_id: number;
+  kind: string;
+  value: string;
+  status: string;
+  hits: number;
+  first_seen: string;
+  last_seen: string;
+  decided_at?: string;
+}
+
+export interface IntranetOverview {
+  task_id: number;
+  credentials?: CredentialMeta[];
+  tunnels?: TunnelRecord[];
+  pending_scope?: PendingScope[];
+  honeypot_assets?: { id: number; label: string; score: number; evidence: string }[];
+  topology?: {
+    nodes: { id: number; kind: string; ip?: string; label?: string; port?: number; segment?: string; honeypot?: boolean }[];
+    edges: { from: number; to: number; type: string }[];
+  };
 }
 
 export interface TaskAssetMutation {

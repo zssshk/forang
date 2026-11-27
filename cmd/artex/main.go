@@ -22,6 +22,7 @@ import (
 	"github.com/Autumn-27/artex/config"
 	"github.com/Autumn-27/artex/selfupdate"
 	"github.com/Autumn-27/artex/server"
+	"github.com/Autumn-27/artex/toolscheck"
 )
 
 // version is the build version, injected at release time via
@@ -53,6 +54,11 @@ func main() {
 }
 
 func run() int {
+	// `artex doctor`：部署预检（只读），在 flag 解析前分流。
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		return runDoctor(os.Args[2:])
+	}
+
 	var (
 		addr    = flag.String("addr", ":8787", "HTTP listen address")
 		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
@@ -93,6 +99,27 @@ func run() int {
 		log.Printf("[config] 配置文件: %s", cfgPath)
 	} else {
 		log.Printf("[config] 配置文件: %s (不存在 — 将仅尝试环境变量 ARTEX_PG_DSN)", cfgPath)
+	}
+
+	// 外部工具钉版清单启动自检（v0.6.3）：只警告、不阻断启动。哈希不匹配才
+	// 记一条显眼日志（部署机换了二进制没同步清单时能第一时间发现）。
+	manifestPath := toolscheck.ManifestPath(*dataDir)
+	if _, err := os.Stat(manifestPath); err != nil {
+		if exe, e := os.Executable(); e == nil {
+			manifestPath = filepath.Join(filepath.Dir(exe), "tools-manifest.json")
+		}
+	}
+	if m, err := toolscheck.Load(manifestPath); err == nil {
+		for _, res := range toolscheck.Check(m, *dataDir) {
+			switch res.Status {
+			case toolscheck.StatusMismatch:
+				log.Printf("[toolscheck] FAIL %s：%s", res.Tool.Name, res.Message)
+			case toolscheck.StatusMissing:
+				log.Printf("[toolscheck] WARN %s 未找到：%s", res.Tool.Name, res.Message)
+			case toolscheck.StatusUnpinned:
+				log.Printf("[toolscheck] WARN %s 未钉版（sha256 为空）", res.Tool.Name)
+			}
+		}
 	}
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -25,7 +25,7 @@ import (
 const plannerRoundBudget = 15 * time.Minute
 
 type Planner struct {
-	presetID string // 三端预设 Agent: 方法论提示词注入(不改工具权限)
+	presetID          string // 三端预设 Agent: 方法论提示词注入(不改工具权限)
 	findingRecorder   FindingRecorder
 	prov              llm.Provider
 	model             string
@@ -44,6 +44,7 @@ type Planner struct {
 	noaEnabledFn      func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor         *Compactor                             // cold-node compaction (§7); nil = disabled
+	credKey           []byte                                 // 凭据库加密主钥（jwt.key；nil = 凭据工具不可用）
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -99,6 +100,10 @@ func (p *Planner) SetProxy(addr, caCert string) { p.proxyAddr, p.proxyCACert = a
 
 // SetPreset sets the test-mode preset (methodology prompt injected into sys prompt).
 func (p *Planner) SetPreset(id string) { p.presetID = id }
+
+// SetCredentialKey wires the credential-store master key (jwt.key content) so
+// the planner's ToolSet can offer the credential tools. nil = unavailable.
+func (p *Planner) SetCredentialKey(key []byte) { p.credKey = key }
 
 // SetWebSearch selects the web_search backend for the planner (off by default).
 func (p *Planner) SetWebSearch(o WebSearchOpts) { p.webSearch = o }
@@ -349,7 +354,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 func plannerSystem(goal, dataDir, workDir string) string {
 	body := renderSystem("planner", plannerDefaultTmpl, PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()})
-	return body + artifactSpec(workDir)
+	return body + artifactSpec(workDir) + plannerHoneypotRules
 }
 
 // Plan runs one planning round. emit, if non-nil, receives the planner's execution
@@ -368,6 +373,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	p.compactor.OnPlannerRound(ctx, ts)
 	tsx := NewToolSet(ts, "planner")
 	tsx.SetFindingRecorder(p.findingRecorder)
+	tsx.SetCredentialKey(p.credKey)
 	if as != nil {
 		tsx.SetAssetStore(as, as.Companies())
 	}

@@ -53,13 +53,14 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 // One ToolSet is created per planner/worker run; per-run signals live here.
 type ToolSet struct {
 	findingRecorder FindingRecorder
-	as              *db.AssetStore   // asset store (optional; nil = asset tools not available)
-	cs              *db.CompanyStore // company store (optional)
-	pocs            *db.PocStore     // POC 闭环 store (optional; nil = poc tools unavailable)
-	vulns           *db.VulnStore    // 漏洞中枢 store (optional; nil = vuln tools unavailable)
-	surveySvc       *survey.Service  // 资产测绘 (optional; nil = survey tools unavailable)
-	apimodels     *db.ApiModelStore // 业务建模 (optional; nil = api_model tools unavailable)
-	droidDir        string           // droid 文件工具（截图/pull/push/install）的落盘目录 (optional)
+	as              *db.AssetStore    // asset store (optional; nil = asset tools not available)
+	cs              *db.CompanyStore  // company store (optional)
+	pocs            *db.PocStore      // POC 闭环 store (optional; nil = poc tools unavailable)
+	credKey         []byte            // 凭据库加密主钥（jwt.key 内容；nil = 凭据工具不可用）
+	vulns           *db.VulnStore     // 漏洞中枢 store (optional; nil = vuln tools unavailable)
+	surveySvc       *survey.Service   // 资产测绘 (optional; nil = survey tools unavailable)
+	apimodels       *db.ApiModelStore // 业务建模 (optional; nil = api_model tools unavailable)
+	droidDir        string            // droid 文件工具（截图/pull/push/install）的落盘目录 (optional)
 	ts              *db.ExplorationStore
 	worker          string
 	taskID          int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
@@ -181,6 +182,28 @@ func (t *ToolSet) SetTaskID(id int64) { t.taskID = id }
 // either way, because task_scope is the task's range boundary (the filter basis for
 // asset queries), not merely a coverage denominator.
 func (t *ToolSet) SetCoverageEnabled(enabled bool) { t.coverageDisabled = !enabled }
+
+// SetCredentialKey wires the credential-store master key (jwt.key content) onto
+// this ToolSet. Without it the credential tools report unavailable instead of
+// writing plaintext. The key is held in memory only, never logged or persisted.
+func (t *ToolSet) SetCredentialKey(key []byte) { t.credKey = key }
+
+// credentialStore builds the task's credential store (AES-GCM, key derived from
+// jwt.key). nil when the asset store or the key is missing.
+func (t *ToolSet) credentialStore() *db.CredentialStore {
+	if t.as == nil || len(t.credKey) == 0 {
+		return nil
+	}
+	return db.NewCredentialStore(t.as.DB(), t.credKey)
+}
+
+// tunnelStore builds the task's tunnel ledger store. nil when no asset store.
+func (t *ToolSet) tunnelStore() *db.TunnelStore {
+	if t.as == nil {
+		return nil
+	}
+	return db.NewTunnelStore(t.as.DB())
+}
 
 // CoverageDisabled reports whether the coverage feature is off for this task.
 func (t *ToolSet) CoverageDisabled() bool { return t.coverageDisabled }
@@ -552,6 +575,18 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			if len(m) > 0 {
 				out["coverage"] = m
 			}
+		}
+		// v0.6.3 蜜罐：本任务静态签名命中的疑似蜜罐资产（单信号，处置见 planner
+		// 提示词尾的蜜罐处置纪律）。best-effort，查不到不影响态势。
+		if rows, err := t.as.HoneypotAssetsByTask(t.taskID, 20); err == nil && len(rows) > 0 {
+			list := make([]map[string]any, 0, len(rows))
+			for _, r := range rows {
+				list = append(list, map[string]any{
+					"id": r.ID, "label": r.Label, "score": r.Score,
+					"evidence": r.Evidence,
+				})
+			}
+			out["honeypot_assets"] = list
 		}
 	}
 	return out
@@ -2090,5 +2125,8 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.addTaskScope(),
 		// list_untested_assets：按需查本任务范围内未测资产(类型+分页)，自行决定补测。
 		t.listUntestedAssets(),
+		// 蜜罐识别（v0.6.3 ymh 移植）：honeypot_check 只读评估；suggest_credentials
+		// 凭据复用打分（只返元数据）；tunnel_plan 生成隧道计划并入账。
+		t.honeypotCheck(), t.suggestCredentials(), t.tunnelPlan(),
 	}
 }

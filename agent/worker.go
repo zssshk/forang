@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/survey"
 	"github.com/Autumn-27/artex/intercept"
+	"github.com/Autumn-27/artex/survey"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
@@ -58,10 +58,11 @@ type Worker struct {
 	model           string
 	workDir         string
 	proxyAddr       string
-	presetID        string // 三端预设 Agent: 方法论提示词注入(不改工具权限)
+	presetID        string            // 三端预设 Agent: 方法论提示词注入(不改工具权限)
 	proxyCACert     string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
 	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
-	surveySvc       *survey.Service  // 资产测绘服务 (optional)
+	surveySvc       *survey.Service   // 资产测绘服务 (optional)
+	credKey         []byte            // 凭据库加密主钥（jwt.key；nil = 凭据工具不可用）
 	tx              *transcript.Store // raw LLM conversation persistence (nil = off)
 	window          int               // context window in tokens (for compaction)
 	windowFn        func() int        // optional dynamic task-chain minimum
@@ -194,6 +195,10 @@ func (w *Worker) SetProxy(addr, caCert string) { w.proxyAddr, w.proxyCACert = ad
 // SetPreset sets the test-mode preset (methodology prompt injected into sys prompt).
 func (w *Worker) SetPreset(id string) { w.presetID = id }
 
+// SetCredentialKey wires the credential-store master key (jwt.key content) so
+// the worker's ToolSet can offer the credential tools. nil = unavailable.
+func (w *Worker) SetCredentialKey(key []byte) { w.credKey = key }
+
 // SetWebSearch selects the web_search backend for this worker (off by default).
 func (w *Worker) SetWebSearch(o WebSearchOpts) { w.webSearch = o }
 
@@ -316,7 +321,7 @@ func workerSystem(proxyAddr, caCert, dataDir, runDir string) string {
 	// caCert is present only when the recording MITM is on, which is exactly when
 	// the traffic_* tools are registered — so it gates the traffic-tool note.
 	// Optional finding guidance is added for every role after tool resolution.
-	return body + workerTrafficBlock(caCert != "") + webshellPlaybookBlock() + workerArtifactSpec(runDir)
+	return body + workerTrafficBlock(caCert != "") + webshellPlaybookBlock() + workerHoneypotRedlines + workerArtifactSpec(runDir)
 }
 
 // renderIntentTask formats the claimed intent for the worker's launch USER message:
@@ -387,12 +392,13 @@ func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int
 func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), enr EnrichTrigger, notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
 	tsx := NewToolSet(ts, name)
 	tsx.SetFindingRecorder(w.findingRecorder)
+	tsx.SetCredentialKey(w.credKey)
 	tsx.SetTaskID(taskID)
 	coverageEnabled := as == nil || as.CoverageEnabled(taskID)
 	tsx.SetCoverageEnabled(coverageEnabled)
 	if as != nil {
 		tsx.SetAssetStore(as, as.Companies())
-	tsx.SetPocStore(as.Pocs())
+		tsx.SetPocStore(as.Pocs())
 	}
 	tsx.SetDroidDir(w.workDir)          // droid 文件工具（截图/拉取/推送/安装）落到 worker 工作目录
 	tsx.SetSurveyService(w.surveySvc)   // 资产测绘（FOFA/Quake/Hunter）
@@ -580,4 +586,5 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 
 // SetSurveyService 注入资产测绘服务（FOFA/Quake/Hunter 工具；nil=工具报未配置）。
 func (w *Worker) SetSurveyService(svc *survey.Service) { w.surveySvc = svc }
+
 // SetReplayCapture 注入 replayd 留证回调（nil = 工具报不可用）。

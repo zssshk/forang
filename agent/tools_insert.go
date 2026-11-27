@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/honeydetect"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -339,6 +340,17 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 				}
 				results = append(results, result{Index: i, ID: id, Type: typ})
 				t.writes.Assets++
+				// v0.6.3 蜜罐 L1：service 落库后跑静态签名评估（best-effort，不影响登记）。
+				if typ == "service" {
+					v := honeydetect.ServiceView{Port: item.Port}
+					if item.URL != "" {
+						v.Port = urlPort(item.URL)
+						v.Title = item.PageTitle
+					} else {
+						v.Banner = item.ServiceName
+					}
+					t.evaluateHoneypot(id, v)
+				}
 				t.anchorOwner(id)
 				if taskID > 0 {
 					var sourceNodeID *int64
@@ -649,6 +661,10 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		// asset management (handlers guard nil store internally)。
 		// add_company_scope 不给 worker：定义企业资产范围属规划/主控/Auto 的职责，worker 只执行探索。
 		t.insertAssets(), t.listAssets(),
+		// 蜜罐识别（v0.6.3 ymh 移植）：honeypot_check 只读评估；register_credential
+		// 把侦察所得凭据加密入库；suggest_credentials 凭据复用打分（只返元数据）；
+		// report_pending_scope 登记 scope 外网段（人工批准后才扩范围）。
+		t.honeypotCheck(), t.registerCredential(), t.suggestCredentials(), t.reportPendingScope(),
 		// 跨 work 回看：worker 也可复用其他 work 的观察，避免重复劳动。
 		// search_all_worker_traces：不必先知道 intent_id，按关键字全局捞命中步骤；
 		// get_worker_trace：锁定某条 work 后列步骤/就地搜/取完整内容。
@@ -668,20 +684,20 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 	// 移动设备动态测试（adb 直连模拟器/真机）：APP 渗透的执行层，工具自带
 	// connect/devices 前置，无设备时报错引导，不影响其他任务。
 	tools = append(tools, t.droidTools()...)
-	tools = append(tools, t.repeaterTools()...) // 工具箱 Repeater：发包发送 + 带时间留证截图
-	tools = append(tools, t.bindFindingEvidence()) // 截图/输出绑定漏洞证据（报告嵌图）
-	tools = append(tools, t.screenshotTool()) // 网页截图（Chromium headless，漏洞证据用）
-	tools = append(tools, t.fridaTools()...) // frida 动态调试（脱壳/反检测/明文流量）
-	tools = append(tools, t.surveyTools()...) // 资产测绘（FOFA/Quake/Hunter，未配置时工具报错引导）
-	tools = append(tools, t.apiModelTools()...) // 业务建模（操作员要求时 agent 合并 OpenAPI 文档）
+	tools = append(tools, t.repeaterTools()...)              // 工具箱 Repeater：发包发送 + 带时间留证截图
+	tools = append(tools, t.bindFindingEvidence())           // 截图/输出绑定漏洞证据（报告嵌图）
+	tools = append(tools, t.screenshotTool())                // 网页截图（Chromium headless，漏洞证据用）
+	tools = append(tools, t.fridaTools()...)                 // frida 动态调试（脱壳/反检测/明文流量）
+	tools = append(tools, t.surveyTools()...)                // 资产测绘（FOFA/Quake/Hunter，未配置时工具报错引导）
+	tools = append(tools, t.apiModelTools()...)              // 业务建模（操作员要求时 agent 合并 OpenAPI 文档）
 	tools = append(tools, t.webshellGen(), t.webshellExec(), // webshell 生成/连接（移植自 AI-PENTEST）
 		t.webshellPrivesc(), t.webshellPlugin()) // 提权面分析 + 插件通道（数据库/内网/进程/内存马）
-	tools = append(tools, t.c2Tools()...) // C2 指挥（对接 goc2-server 管理 API）
-	tools = append(tools, t.kbSearchTool()) // 知识库检索（跨任务经验复用）
+	tools = append(tools, t.c2Tools()...)                     // C2 指挥（对接 goc2-server 管理 API）
+	tools = append(tools, t.kbSearchTool())                   // 知识库检索（跨任务经验复用）
 	tools = append(tools, t.dictAddTool(), t.dictQueryTool()) // 字典中心：沉淀 + 查询
-	tools = append(tools, t.autoEscalateTool()) // 渗透↔工具箱自动联动（发现漏洞→自动攻击链）
-	tools = append(tools, t.fingerprintTool()) // 指纹识别→POC匹配→渗透建议
-	tools = append(tools, t.scanTools()...) // 端口扫描/目录扫描（工具箱扫描引擎，动作入图）
+	tools = append(tools, t.autoEscalateTool())               // 渗透↔工具箱自动联动（发现漏洞→自动攻击链）
+	tools = append(tools, t.fingerprintTool())                // 指纹识别→POC匹配→渗透建议
+	tools = append(tools, t.scanTools()...)                   // 端口扫描/目录扫描（工具箱扫描引擎，动作入图）
 	return tools
 }
 
@@ -708,21 +724,21 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.listUntestedAssets(),
 	}
 	tools = append(tools, t.droidTools()...)
-	tools = append(tools, t.repeaterTools()...) // 工具箱 Repeater：发包发送 + 带时间留证截图
+	tools = append(tools, t.repeaterTools()...)    // 工具箱 Repeater：发包发送 + 带时间留证截图
 	tools = append(tools, t.bindFindingEvidence()) // 截图/输出绑定漏洞证据（报告嵌图）
-	
+
 	tools = append(tools, t.fridaTools()...)
 	tools = append(tools, t.apiModelTools()...)
 	tools = append(tools, t.surveyTools()...)
-	tools = append(tools, t.screenshotTool()) // 网页截图（漏洞证据）
+	tools = append(tools, t.screenshotTool())                // 网页截图（漏洞证据）
 	tools = append(tools, t.webshellGen(), t.webshellExec(), // webshell 生成/连接（移植自 AI-PENTEST）
 		t.webshellPrivesc(), t.webshellPlugin()) // 提权面分析 + 插件通道（数据库/内网/进程/内存马）
-	tools = append(tools, t.c2Tools()...) // C2 指挥（对接 goc2-server 管理 API）
-	tools = append(tools, t.kbSearchTool()) // 知识库检索（跨任务经验复用）
+	tools = append(tools, t.c2Tools()...)                     // C2 指挥（对接 goc2-server 管理 API）
+	tools = append(tools, t.kbSearchTool())                   // 知识库检索（跨任务经验复用）
 	tools = append(tools, t.dictAddTool(), t.dictQueryTool()) // 字典中心：沉淀 + 查询
-	tools = append(tools, t.autoEscalateTool()) // 渗透↔工具箱自动联动（发现漏洞→自动攻击链）
-	tools = append(tools, t.fingerprintTool()) // 指纹识别→POC匹配→渗透建议
-	tools = append(tools, t.scanTools()...) // 端口扫描/目录扫描（工具箱扫描引擎，动作入图）
+	tools = append(tools, t.autoEscalateTool())               // 渗透↔工具箱自动联动（发现漏洞→自动攻击链）
+	tools = append(tools, t.fingerprintTool())                // 指纹识别→POC匹配→渗透建议
+	tools = append(tools, t.scanTools()...)                   // 端口扫描/目录扫描（工具箱扫描引擎，动作入图）
 	return tools
 }
 

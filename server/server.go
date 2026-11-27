@@ -850,6 +850,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/tasks/{id}/assets/{assetID}", s.detachTaskAsset)
 	mux.HandleFunc("GET /api/tasks/{id}/intent-assets", s.taskIntentAssets)
 
+	// 内网作战（v0.6.3 artex-ymh 移植）：凭据库 / 隧道台账 / 待授权网段 /
+	// 外网→内网任务移交 / 内网拓扑总览。
+	mux.HandleFunc("GET /api/tasks/{id}/intranet", s.intranetOverview)
+	mux.HandleFunc("GET /api/tasks/{id}/credentials", s.listCredentials)
+	mux.HandleFunc("POST /api/tasks/{id}/credentials", s.createCredential)
+	mux.HandleFunc("DELETE /api/tasks/{id}/credentials/{cid}", s.deleteCredential)
+	mux.HandleFunc("POST /api/tasks/{id}/credentials/{cid}/verify", s.verifyCredential)
+	mux.HandleFunc("GET /api/tasks/{id}/tunnels", s.listTunnels)
+	mux.HandleFunc("POST /api/tasks/{id}/tunnels/plan", s.createTunnelPlan)
+	mux.HandleFunc("POST /api/tasks/{id}/tunnels/{tid}/state", s.updateTunnelState)
+	mux.HandleFunc("GET /api/tasks/{id}/pending-scope", s.listPendingScope)
+	mux.HandleFunc("POST /api/tasks/{id}/pending-scope", s.createPendingScope)
+	mux.HandleFunc("POST /api/tasks/{id}/pending-scope/{sid}/decide", s.decidePendingScope)
+	mux.HandleFunc("POST /api/tasks/{id}/handoff", s.createHandoff)
+
 	// 工作空间文件管理器（针对 workDir）
 	mux.HandleFunc("GET /api/workspace/list", s.wsList)
 	mux.HandleFunc("GET /api/workspace/read", s.wsRead)

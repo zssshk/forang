@@ -32,6 +32,8 @@ import type {
   ConvTokenSummary,
   CoverageAssetRefs,
   CoverageGraphData,
+  CredentialCreateInput,
+  CredentialMeta,
   DailyTokenBucket,
   DeleteTaskOptions,
   DeleteTaskResult,
@@ -56,6 +58,7 @@ import type {
   InterceptDetail,
   InterceptPending,
   InterceptRule,
+  IntranetOverview,
   JudgeConfig,
   JudgeUsage,
   LLMPoolStatus,
@@ -73,6 +76,7 @@ import type {
   NotificationDelivery,
   NotificationFilter,
   NotificationMeta,
+  PendingScope,
   PromptVar,
   PromptVersion,
   SessionTokenUsage,
@@ -104,6 +108,9 @@ import type {
   TrafficEvidenceRole,
   TrafficHost,
   TrafficResp,
+  TunnelPlanInput,
+  TunnelPlanResult,
+  TunnelRecord,
   UpdateCheck,
   UsageStats,
   WorkspaceFile,
@@ -402,6 +409,37 @@ export const api = {
     }>(`/tasks/${id}/coverage`),
   // 资产覆盖图：范围内全部资产 + 连接用的根域名/公司节点，含 tested/in_scope。
   taskCoverageGraph: (id: string) => get<CoverageGraphData>(`/tasks/${id}/coverage-graph`),
+  // ---- 内网作战（v0.6.3 ymh 移植）----
+  // 内网总览：凭据（元数据）、隧道、待授权网段、疑似蜜罐、拓扑图。
+  intranetOverview: (id: string) => get<IntranetOverview>(`/tasks/${id}/intranet`),
+  listCredentials: (id: string) =>
+    get<{ credentials: CredentialMeta[] | null }>(`/tasks/${id}/credentials`).then((r) => ({
+      credentials: arr(r.credentials),
+    })),
+  createCredential: (id: string, body: CredentialCreateInput) =>
+    post<{ credential_id: number; encrypted: boolean }>(`/tasks/${id}/credentials`, body),
+  deleteCredential: (id: string, cid: number) => del<{ deleted: number }>(`/tasks/${id}/credentials/${cid}`),
+  verifyCredential: (id: string, cid: number, verified: boolean) =>
+    post<{ credential_id: number; verified: boolean }>(`/tasks/${id}/credentials/${cid}/verify`, { verified }),
+  listTunnels: (id: string) =>
+    get<{ tunnels: TunnelRecord[] | null }>(`/tasks/${id}/tunnels`).then((r) => ({ tunnels: arr(r.tunnels) })),
+  createTunnelPlan: (id: string, body: TunnelPlanInput) =>
+    post<TunnelPlanResult>(`/tasks/${id}/tunnels/plan`, body),
+  updateTunnelState: (id: string, tid: number, state: string, error?: string) =>
+    post<{ tunnel_id: number; state: string }>(`/tasks/${id}/tunnels/${tid}/state`, { state, error: error ?? "" }),
+  listPendingScope: (id: string, all = false) =>
+    get<{ pending_scope: PendingScope[] | null }>(`/tasks/${id}/pending-scope${all ? "?all=1" : ""}`).then((r) => ({
+      pending_scope: arr(r.pending_scope),
+    })),
+  createPendingScope: (id: string, value: string) =>
+    post<{ created: boolean; kind: string; value: string }>(`/tasks/${id}/pending-scope`, { kind: "cidr", value }),
+  decidePendingScope: (id: string, sid: number, approved: boolean) =>
+    post<PendingScope>(`/tasks/${id}/pending-scope/${sid}/decide`, { approved }),
+  createHandoff: (id: string, assetId: number, note?: string) =>
+    post<{ subtask_id: string; foothold: string; scope: string; note: string }>(`/tasks/${id}/handoff`, {
+      asset_id: assetId,
+      note: note ?? "",
+    }),
   // 全局 llm_usage 聚合（仪表盘新版 token 视图）：按 profile 总量 + 按天分桶。
   usageStats: (days = 365) => get<UsageStats>(`/tokens/usage?days=${days}`),
   // ---- 目标管理（总览）----
