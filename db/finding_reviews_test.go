@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 )
 
@@ -83,7 +84,95 @@ func TestFindingReviewFlow(t *testing.T) {
 	}
 }
 
-// TestFindingGradeWrite covers grading at the RecordFindingTx write path:
+// TestFindingRegressionSpec covers the v0.6.4 deterministic regression spec:
+// token assertion wins when the evidence carries a validate token, diff wins
+// with a baseline, and no proof traffic means no spec at all (never fabricated).
+func TestFindingRegressionSpec(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+
+	tk, err := d.CreateTask("回归 spec 测试", "目标", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.DeleteTask(tk.ID)
+	es := d.Exploration(tk.ExplorationID)
+	nodeID, err := es.AddNode(KindFinding, map[string]any{"summary": "x", "severity": "high"}, 5, "confirmed", "worker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fid, err := d.AddFinding(tk.ID, nodeID, "SQLi", "SQL 注入", "high", "summary", "poc", "worker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proof := PreparedTrafficEvidence{
+		Ref:      TrafficRef{TrafficID: "tr-proof-1", Role: "proof"},
+		Snapshot: TrafficEvidenceSnapshot{URL: "https://target.example/login", Method: "POST", Status: 200},
+	}
+	baseline := PreparedTrafficEvidence{
+		Ref:      TrafficRef{TrafficID: "tr-base-1", Role: "baseline"},
+		Snapshot: TrafficEvidenceSnapshot{URL: "https://target.example/login", Method: "POST", Status: 200},
+	}
+	in := RecordFindingInput{Evidence: "登录成功，响应含 validate:AbC12345_xyz:pass 标记"}
+
+	// 1. token 断言优先于 diff。
+	if err := d.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
+		return UpsertFindingRegressionTx(tx, fid, in, []PreparedTrafficEvidence{baseline, proof})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := d.GetFindingRegression(fid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec == nil || spec.Assertion != "token" || spec.Token != "AbC12345_xyz" ||
+		spec.Method != "POST" || spec.URL != "https://target.example/login" || spec.ExpectedStatus != 200 {
+		t.Fatalf("token spec = %+v", spec)
+	}
+
+	// 2. 无 token 时有 baseline → diff 断言（同一 finding 刷新，不新增行）。
+	in.Evidence = "登录成功"
+	if err := d.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
+		return UpsertFindingRegressionTx(tx, fid, in, []PreparedTrafficEvidence{baseline, proof})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spec, err = d.GetFindingRegression(fid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec == nil || spec.Assertion != "diff" || spec.Token != "" {
+		t.Fatalf("diff spec = %+v", spec)
+	}
+
+	// 3. 只有 baseline、无 proof → 不生成 spec。
+	nodeID2, err := es.AddNode(KindFinding, map[string]any{"summary": "y", "severity": "low"}, 5, "confirmed", "worker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fid2, err := d.AddFinding(tk.ID, nodeID2, "InfoLeak", "版本泄露", "low", "summary", "poc", "worker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
+		return UpsertFindingRegressionTx(tx, fid2, in, []PreparedTrafficEvidence{baseline})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spec, err = d.GetFindingRegression(fid2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec != nil {
+		t.Fatalf("no-proof finding must have no spec, got %+v", spec)
+	}
+}
+
 // a high-severity finding with only L1 evidence is excluded from the formal
 // report; a proof-bound L3 finding is not.
 func TestFindingGradeWrite(t *testing.T) {
