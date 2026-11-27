@@ -62,8 +62,8 @@ func DowngradeSeverity(sev string) string {
 	return sev
 }
 
-// FindingReview is one row of finding_reviews.
-type FindingReview struct {
+// FindingQualityReview is one row of finding_reviews.
+type FindingQualityReview struct {
 	ID           int64     `json:"id,string"`
 	FindingID    int64     `json:"finding_id,string"`
 	Reviewer     string    `json:"reviewer"`
@@ -106,7 +106,7 @@ type FindingRegression struct {
 // AddFindingReview applies one review verdict to a finding and records it.
 // The status/severity change and the review row land in one transaction, so a
 // verdict never applies without its audit trail. Returns the recorded review.
-func (d *DB) AddFindingReview(ctx context.Context, findingID int64, reviewer, verdict, note string) (*FindingReview, error) {
+func (d *DB) AddFindingReview(ctx context.Context, findingID int64, reviewer, verdict, note string) (*FindingQualityReview, error) {
 	verdict = strings.ToLower(strings.TrimSpace(verdict))
 	if !ValidReviewVerdict(verdict) {
 		return nil, errors.New("无效的复核结论")
@@ -119,7 +119,7 @@ func (d *DB) AddFindingReview(ctx context.Context, findingID int64, reviewer, ve
 		reviewer = reviewer[:64]
 	}
 	note = strings.TrimSpace(note)
-	rev := &FindingReview{FindingID: findingID, Reviewer: reviewer, Verdict: verdict, Note: note}
+	rev := &FindingQualityReview{FindingID: findingID, Reviewer: reviewer, Verdict: verdict, Note: note}
 	err := d.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
 		var status, severity string
 		if err := tx.QueryRow(`SELECT status, severity FROM findings WHERE id=$1 FOR UPDATE`, findingID).Scan(&status, &severity); err != nil {
@@ -157,7 +157,7 @@ func (d *DB) AddFindingReview(ctx context.Context, findingID int64, reviewer, ve
 }
 
 // ListFindingReviews returns a finding's review history, newest first.
-func (d *DB) ListFindingReviews(findingID int64) ([]*FindingReview, error) {
+func (d *DB) ListFindingReviews(findingID int64) ([]*FindingQualityReview, error) {
 	rows, err := d.Query(`SELECT id, finding_id, reviewer, verdict, note,
 		prev_status, new_status, prev_severity, new_severity, created_at
 		FROM finding_reviews WHERE finding_id=$1 ORDER BY id DESC`, findingID)
@@ -165,9 +165,9 @@ func (d *DB) ListFindingReviews(findingID int64) ([]*FindingReview, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*FindingReview
+	var out []*FindingQualityReview
 	for rows.Next() {
-		r := &FindingReview{}
+		r := &FindingQualityReview{}
 		if err := rows.Scan(&r.ID, &r.FindingID, &r.Reviewer, &r.Verdict, &r.Note,
 			&r.PrevStatus, &r.NewStatus, &r.PrevSeverity, &r.NewSeverity, &r.CreatedAt); err != nil {
 			return nil, err

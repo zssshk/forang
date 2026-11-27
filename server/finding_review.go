@@ -90,7 +90,7 @@ func (s *Server) listFindingReviews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if items == nil {
-		items = []*db.FindingReview{}
+		items = []*db.FindingQualityReview{}
 	}
 	writeJSON(w, 200, map[string]any{"reviews": items})
 }
