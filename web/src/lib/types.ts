@@ -948,6 +948,10 @@ export interface Settings {
   // worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction;每 run 读一次,对
   // 之后启动的 run 生效。
   noa_compaction?: boolean;
+  // 评审模型：finding 评审 / 拦截裁判 / supervisor / C2 分析共用的模型配置 id；
+  // 0=未指定（回落默认模型）。知识库（蒸馏）模型：0=跟随评审模型。
+  reviewer_profile_id?: number;
+  kb_profile_id?: number;
   // ---- 漏洞 IM 推送（渠道本身是独立资源，见 /api/notify/*，这里只有三项全局配置）----
   notify_enabled?: boolean; // 推送总开关，默认开；用于维护期一键止血
   notify_public_base_url?: string; // 漏洞详情回链的外部访问地址；空=消息不带回链

@@ -27,7 +27,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
-import type { LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
+import type { LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { ProfileRetryFields, RetryPolicyPanel, ZERO_OVERRIDE } from "./_components/retry";
@@ -788,6 +788,9 @@ function ProfileSheet({
 export default function LLMPage() {
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
+  // 评审 / 知识库模型（GET /api/settings 的 reviewer_profile_id / kb_profile_id，
+  // 0=未指定：评审回落默认模型，知识库回落评审模型）。
+  const [modelSettings, setModelSettings] = React.useState<Settings | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
   // 抽屉的开关和内容分开存：关闭时 editing 保持不变，否则关闭动画期间标题会从
   // 「编辑 X」闪成「新建」。editing = null 表示新建。
@@ -812,8 +815,32 @@ export default function LLMPage() {
     } catch {
       /* ignore */
     }
+    try {
+      setModelSettings(await api.settings());
+    } catch {
+      /* ignore */
+    }
     await loadPool();
   }, [loadPool]);
+
+  // 评审 / 知识库模型切换：PUT /api/settings，保存后即时生效，无需重启。
+  async function saveModelSetting(patch: { reviewer_profile_id?: number; kb_profile_id?: number }) {
+    try {
+      setModelSettings(await api.setSettings(patch));
+      toast.success("已保存，立即生效");
+    } catch (e) {
+      toast.error(`设置失败：${(e as Error).message}`);
+    }
+  }
+
+  const defaultProfile = profiles.find((p) => p.is_default);
+  const profileName = (id?: number) => profiles.find((p) => Number(p.id) === id)?.name;
+  // 知识库当前生效的模型：kb 指定 > 评审指定 > 默认模型。
+  const effectiveKbName =
+    profileName(modelSettings?.kb_profile_id) ??
+    profileName(modelSettings?.reviewer_profile_id) ??
+    defaultProfile?.name ??
+    "未配置";
 
   React.useEffect(() => {
     void load();
@@ -875,6 +902,60 @@ export default function LLMPage() {
           </Button>
         </div>
       </div>
+
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-4 md:p-5">
+          <div>
+            <h2 className="font-semibold text-base">评审与知识库模型</h2>
+            <p className="text-muted-foreground text-sm">
+              评审模型供 finding 评审、拦截裁判与 C2 分析共用；知识库模型只供蒸馏用，选「跟随评审员」时与评审模型相同。改完立即生效，无需重启。
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label>评审模型</Label>
+              <Select
+                value={String(modelSettings?.reviewer_profile_id ?? 0)}
+                onValueChange={(v) => void saveModelSetting({ reviewer_profile_id: Number(v) })}
+                disabled={modelSettings === null}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">默认模型{defaultProfile ? `（${defaultProfile.name}）` : ""}</SelectItem>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}（{p.model}）
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>知识库模型</Label>
+              <Select
+                value={String(modelSettings?.kb_profile_id ?? 0)}
+                onValueChange={(v) => void saveModelSetting({ kb_profile_id: Number(v) })}
+                disabled={modelSettings === null}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">跟随评审员</SelectItem>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}（{p.model}）
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-muted-foreground text-xs">知识库当前生效：{effectiveKbName}</p>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="profiles" className="flex-1">
         <TabsList>

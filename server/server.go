@@ -3639,6 +3639,10 @@ func (s *Server) settingsPayload() map[string]any {
 		"notify_public_base_url":     notifyPublicBaseURL(s.m.pg),
 		"tunnel_auto_sync":           getSettingDefault(s.m.pg, "tunnel.auto_sync", "true") != "false",
 		"notify_digest_interval_min": notifyDigestIntervalMin(s.m.pg),
+		// 评审模型 / 知识库模型：llm_profiles id；0=未指定（评审回落默认模型，
+		// 知识库回落评审模型）。两者每调用读一次，改完即时生效，无需重启。
+		"reviewer_profile_id": s.reviewerProfileID(),
+		"kb_profile_id":       s.kbProfileID(),
 	}
 }
 
@@ -3727,6 +3731,10 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		ReportCoverOrg            *string `json:"report_cover_org"`
 		ReportCoverClassification *string `json:"report_cover_classification"`
 		ReportCoverPrefix         *string `json:"report_cover_prefix"`
+		// 评审模型 / 知识库模型：llm_profiles id；0=未指定（评审回落默认模型，
+		// 知识库回落评审模型）。两者每调用读一次，保存后即时生效，无需重建 agent。
+		ReviewerProfileID *int64 `json:"reviewer_profile_id"`
+		KBProfileID       *int64 `json:"kb_profile_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
@@ -3849,6 +3857,31 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		if err := s.m.SetLLMRecordEnabled(*req.LLMRecord); err != nil {
 			writeErr(w, 500, err.Error())
 			return
+		}
+	}
+	if req.ReviewerProfileID != nil || req.KBProfileID != nil {
+		// 评审 / 知识库模型：每调用读一次，保存后即时生效，无需重建 agent。
+		// id 须是已存在的配置（0=未指定，回落链见 kbProfileID/reviewerProfileID）。
+		for _, id := range []*int64{req.ReviewerProfileID, req.KBProfileID} {
+			if id == nil || *id <= 0 {
+				continue
+			}
+			if p, err := s.m.pg.ProfileByID(*id); err != nil || p == nil {
+				writeErr(w, 400, fmt.Sprintf("模型配置 %d 不存在", *id))
+				return
+			}
+		}
+		if req.ReviewerProfileID != nil {
+			if err := s.m.pg.SetSetting("reviewer.profile_id", strconv.FormatInt(*req.ReviewerProfileID, 10)); err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+		}
+		if req.KBProfileID != nil {
+			if err := s.m.pg.SetSetting("kb.profile_id", strconv.FormatInt(*req.KBProfileID, 10)); err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
 		}
 	}
 	changed := false

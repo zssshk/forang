@@ -275,9 +275,13 @@ ON CONFLICT (task_id) DO UPDATE SET title=$2, task_status=$3, status=$4, source=
 	log.Printf("[kb] task %d 蒸馏完成 status=%s vulns=%d facts=%d source=%s", taskID, status, len(finds), len(facts), source)
 }
 
-// kbCallLLM 用平台当前（或 reviewer）模型跑蒸馏。
+// kbCallLLM 用知识库模型（kb.profile_id）跑蒸馏；未指定则跟随评审模型，
+// 再未指定则用平台当前激活模型。
 func (s *Server) kbCallLLM(title, dataStr string) (string, string, error) {
-	profileID := s.reviewerProfileID()
+	profileID := s.kbProfileID()
+	if profileID == 0 {
+		profileID = s.reviewerProfileID()
+	}
 	if profileID == 0 {
 		if p, err := s.m.pg.ActiveProfile(); err == nil && p != nil {
 			profileID = p.ID

@@ -119,6 +119,20 @@ func (s *Server) reviewerProfileID() int64 {
 	return 0
 }
 
+// kbProfileID 解析知识库（蒸馏）模型（0=跟随评审模型）。
+func (s *Server) kbProfileID() int64 {
+	if s.m.pg == nil {
+		return 0
+	}
+	if v, ok, err := s.m.pg.GetSetting("kb.profile_id"); err == nil && ok {
+		var n int64
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
 // startFindingReviewLoop 启动评审轮询（每 20s 取未评审/待重评的发现）。
 func (s *Server) startFindingReviewLoop() {
 	go func() {
