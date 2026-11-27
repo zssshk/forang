@@ -36,6 +36,21 @@ func TestSessionStoreRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Delete(ctx, id) })
 
+	// 回归（v0.6.7 真测抓到）：真实登记从不设 CreatedByIntent（恒 0），
+	// Create 不得把 0 转 NULL——两列是 NOT NULL DEFAULT 0，传 NULL 即 23502。
+	zeroID, err := store.Create(ctx, &SessionRecord{
+		TaskID: 424243, Kind: SessionSSH, URL: "ssh://ubuntu@10.0.0.2:22",
+		Secret: `{"host":"10.0.0.2","username":"ubuntu"}`, CreatedByTask: 424243,
+	})
+	if err != nil {
+		t.Fatalf("intent 为 0 时 Create 应成功: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Delete(ctx, zeroID) })
+	zero, err := store.Get(ctx, zeroID)
+	if err != nil || zero == nil || zero.CreatedByIntent != 0 || zero.CreatedByTask != 424243 {
+		t.Fatalf("intent 为 0 的记录回读不符：%v / %+v", err, zero)
+	}
+
 	got, err := store.Get(ctx, id)
 	if err != nil || got == nil {
 		t.Fatalf("Get: %v / %v", got, err)

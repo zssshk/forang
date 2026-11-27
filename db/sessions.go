@@ -154,12 +154,16 @@ func (s *SessionStore) Create(ctx context.Context, rec *SessionRecord) (int64, e
 		taskID = rec.CreatedByTask
 	}
 	var id int64
+	// created_by_task / created_by_intent 两列是 NOT NULL DEFAULT 0（见
+	// schema.sql），0 是合法值、不得转 NULL：nilIfZero 只适用于可空外键列。
+	// v0.6.5–v0.6.6 在此传 NULL，致所有真实登记（intent 恒为 0）都报
+	// 23502；单测因显式写了 intent=7 才没抓到。
 	err = s.d.QueryRowContext(ctx, `
 INSERT INTO sessions(task_id, kind, host_asset_id, credential_id, url, secret, lang, status, created_by_task, created_by_intent)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id`,
 		taskID, rec.Kind, rec.HostAssetID, rec.CredentialID, rec.URL, enc, rec.Lang, status,
-		nilIfZero(rec.CreatedByTask), nilIfZero(rec.CreatedByIntent)).Scan(&id)
+		rec.CreatedByTask, rec.CreatedByIntent).Scan(&id)
 	return id, err
 }
 

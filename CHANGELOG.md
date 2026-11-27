@@ -15,6 +15,10 @@
 - **接线**：`session/driver.go` 补 ssh 分支（secret 解析失败拒绝建驱动）；`register_session` 与 HTTP `POST /api/tasks/{id}/sessions` 均补 ssh 参数（host/port/username/private_key/key_passphrase/host_key_check/host_key_sha256/timeout_sec），secret 组装收进 `session.BuildSSHSecret` 共用一份（agent 与 server 不再各写一份校验）；登记后立即 Test，不通记 dead；会话列表地址栏显示 `ssh://user@host:port`。secret 仍走 sessions 表 AES-GCM 加密落库（域标签 `artex/sessions/v1`），不另起一套。
 - **UI**：内网立足点会话登记表单新增 ssh 类型（主机/端口/用户名/密码或私钥 PEM/主机密钥指纹选填，填指纹即钉死）；`web/src/lib/api.ts` 的 `createSession` 类型补齐新字段。
 
+### 修 v0.6.5 遗留 bug（线上真测抓到）
+
+- **`db/sessions.go` Create 传 NULL 致所有真实登记 500**：`created_by_task`/`created_by_intent` 两列是 `NOT NULL DEFAULT 0`，但 `Create` 用 `nilIfZero` 把 0 转成显式 NULL 插入，DEFAULT 只在省略列时生效，于是所有 CreatedByIntent 恒为 0 的真实登记（工具 `register_session` 与 HTTP 登记接口）都报 `23502 null value in column "created_by_intent"`。单测因显式写了 intent=7 才没抓到。本版改传原值（0 即合法值），并加回归单测（intent 为 0 的记录能建能读）。
+
 ### 工程
 
 - **测试**：`session/ssh_test.go`——纯函数单测（BuildSSHSecret/NewSSHSession 校验、shellQuote、DriverFor ssh 分支）本地全过；env 门控真机测试（`FORANG_SSH_TEST_ADDR`/`USER`/`KEY`/`FINGERPRINT`，未设跳过）对 DSH 本机（168.107.31.222:5522，密钥认证）实测通过：Test 探针、单行/多行 Exec、非零退出照常返回输出、文件往返（小文件 + 500KB 分块 + 空文件）、读不存在文件明确报错、错指纹拒绝连接、正确指纹（ECDSA）全通。`go vet` 通过（仅剩 `server/evasion.go` 旧警告）；前端 `tsc --noEmit` 通过。
